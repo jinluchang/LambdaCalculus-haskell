@@ -1,6 +1,9 @@
 module Main where
 
 import Data.List
+import qualified Data.Map as M
+import qualified Data.Set as S
+
 import Text.Parsec
 import Text.Parsec.String
 
@@ -10,8 +13,13 @@ data Expr a
     | Lam a (Expr a)
     deriving (Eq, Show)
 
+type Env a = M.Map a (Expr a)
+type Closure a = (Expr a, Env a)
+
 type Name = String
 type LamExpr = Expr Name
+
+type LamClosure = Closure Name
 
 names :: [Name]
 names = map ("var"++) $ map show ([1..] :: [Integer])
@@ -21,6 +29,11 @@ firstUnusedName [] _ = error "firstUnusedName"
 firstUnusedName (n:ns) exprs
     | all (not . (`hasVar` n)) exprs = n
     | otherwise = firstUnusedName ns exprs
+
+freeVariables :: LamExpr -> S.Set Name
+freeVariables (Var x) = S.singleton x
+freeVariables (Ap expr1 expr2) = S.union (freeVariables expr1) (freeVariables expr2)
+freeVariables (Lam x expr) = S.delete x $ freeVariables expr
 
 hasVar :: LamExpr -> Name -> Bool
 hasVar (Var y) x = x == y
@@ -41,22 +54,57 @@ substitude x arg (Lam y expr)
   where
     y' = firstUnusedName names [arg, expr]
 
-apply :: LamExpr -> LamExpr -> LamExpr
-apply (Var f) arg = Ap (Var f) $ eval arg
-apply (Lam x expr) arg = substitude x arg expr
-apply (Ap expr1 expr2) arg = Ap (apply expr1 expr2) $ eval arg
+{-
+applyStep' :: LamExpr -> LamExpr -> Maybe LamExpr
+applyStep' (Var f) arg = do
+    arg' <- evalStep arg
+    return $ Ap (Var f) $ arg'
+applyStep' (Lam x expr) arg = case evalStep arg of
+    Nothing -> Just $ substitude x arg expr
+    Just arg' -> Just $ Ap (Lam x expr) arg'
+applyStep' (Ap expr1 expr2) arg = case evalStep arg of
+    Nothing -> do
+        expr <- applyStep' expr1 expr2
+        return $ Ap expr arg
+    Just arg' -> Just $ Ap (Ap expr1 expr2) arg'
+-- -}
 
-eval :: LamExpr -> LamExpr
-eval (Lam x expr) = Lam x $ eval expr
-eval (Var x) = (Var x)
-eval (Ap expr1 expr2) = apply expr1 expr2
+applyStep :: LamExpr -> LamExpr -> Maybe LamExpr
+applyStep (Var f) arg = do
+    arg' <- evalStep arg
+    return $ Ap (Var f) $ arg'
+applyStep (Lam x expr) arg = Just $ substitude x arg expr
+applyStep (Ap expr1 expr2) arg = case applyStep expr1 expr2 of
+    Nothing -> do
+        arg' <- evalStep arg
+        return $ Ap (Ap expr1 expr2) arg'
+    Just expr -> Just $ Ap expr arg
+
+evalStep :: LamExpr -> Maybe LamExpr
+evalStep (Lam x expr) = do
+    expr' <- evalStep expr
+    return $ Lam x expr'
+evalStep (Var _) = Nothing
+evalStep (Ap expr1 expr2) = applyStep expr1 expr2
+
+repeatEval :: LamExpr -> [LamExpr]
+repeatEval expr = expr : case evalStep expr of
+    Nothing -> []
+    Just expr' -> repeatEval expr'
+
+statistics :: [a] -> (Int, a)
+statistics exprs = go 0 exprs where
+    go _ [] = error "statistics"
+    go n [e] = (n,e)
+    go n (_:es) = go (n+1) es
 
 main :: IO ()
 main = do
     exprStr <- getContents
     let expr = readLamExpr exprStr
     putStr exprStr
-    mapM_ putStrLn $ take 300 . drop 500 . map showLamExpr $ iterate eval expr
+    putStrLn $ (\(n,e)-> show n ++ "\n" ++ showLamExpr e) . statistics $ repeatEval expr
+--    mapM_ putStrLn $ map showLamExpr $ repeatEval expr
 
 showLamExpr :: LamExpr -> String
 showLamExpr (Var x) = x

@@ -102,10 +102,13 @@ hasVarRef :: LamExprRef -> Name -> IO Bool
 hasVarRef (VarRef y) x = return $ x == y
 hasVarRef (ApRef er1 er2) x = do
     e1 <- readIORef er1
-    e2 <- readIORef er2
     b1 <- hasVarRef e1 x
-    b2 <- hasVarRef e2 x
-    return $ b1 || b2
+    if b1
+    then return True
+    else do
+        e2 <- readIORef er2
+        b2 <- hasVarRef e2 x
+        return b2
 hasVarRef (LamRef y er) x
     | x == y = return False
     | otherwise = do

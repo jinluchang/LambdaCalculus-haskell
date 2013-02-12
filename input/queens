@@ -47,6 +47,8 @@ define (\n -> n (const false) true) (\isZero ->
 define (\n m -> and (isZero (minus n m)) (isZero (minus m n))) (\equal ->
 define (\n m -> or (isPositive (minus n m)) (isPositive (minus m n))) (\notEqual ->
 
+define (fix (\len xs -> (isNil xs) 0 (succ (len (cdr xs))))) (\length ->
+
 define (fix (\fac n -> (isZero n) 1 (mult n (fac (prec n))))) (\factorial ->
 
 define (fix (\gen n -> (isZero n) nil (cons n (gen (prec n))))) (\genList ->
@@ -56,12 +58,12 @@ define ((fix (\isOk n ks k -> (isNil ks)
     (and (notEqual k (car ks))
     (and (notEqual (add n k) (car ks))
     (and (notEqual k (add n (car ks)))
-         (isOk (succ n) k (cdr ks))))))) 1) (\isValidNQ ->
+         (isOk (succ n) (cdr ks) k)))))) 1) (\isValidNQ ->
 
 define ((fix (\isOk n ks k -> (isNil ks)
     true
     (and (notEqual k (car ks))
-         (isOk (succ n) k (cdr ks))))) 1) (\isValidNR ->
+         (isOk (succ n) (cdr ks) k)))) 1) (\isValidNR ->
 
 define (\size -> (fix (\search n ks ->
     (isZero n)
@@ -75,6 +77,6 @@ define (\size -> (fix (\search n ks ->
         (foldr (\f g x -> f (g x)) id (map (search (prec n))
             (map (\k -> cons k ks) (filter (isValidNR ks) (genList size))))))) size nil nil) (\searchNR -> 
 
-searchNQ 4
+length (searchNQ 8)
 
-))))))))))))))))))))))))))))))))))))))))))))
+)))))))))))))))))))))))))))))))))))))))))))))

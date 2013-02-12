@@ -1,8 +1,11 @@
 module Main where
 
 import Data.List
+import Data.Maybe
 import qualified Data.Map as M
 import qualified Data.Set as S
+
+import Data.IORef
 
 import Text.Parsec
 import Text.Parsec.String
@@ -13,13 +16,171 @@ data Expr a
     | Lam a (Expr a)
     deriving (Eq, Show)
 
-type Env a = M.Map a (Expr a)
-type Closure a = (Expr a, Env a)
+data ExprRef a
+    = VarRef a
+    | ApRef (IORef (ExprRef a)) (IORef (ExprRef a))
+    | LamRef a (IORef (ExprRef a))
 
 type Name = String
 type LamExpr = Expr Name
+type LamExprRef = ExprRef Name
 
-type LamClosure = Closure Name
+-- Return True if the expression got reduced
+evalStepRef :: IORef LamExprRef -> IO Bool
+evalStepRef exprRef = do
+    expr <- readIORef exprRef
+    case expr of
+        (VarRef _) -> return False
+        (LamRef _ er) -> evalStepRef er
+        (ApRef funRef argRef) -> applyStepRef exprRef funRef argRef
+
+applyStepRef :: IORef LamExprRef -> IORef LamExprRef -> IORef LamExprRef -> IO Bool
+applyStepRef exprRef funRef argRef = do
+    fun <- readIORef funRef
+    case fun of
+        (VarRef _) -> evalStepRef argRef
+        (ApRef e1 e2) -> do
+            funRedex <- applyStepRef funRef e1 e2
+            if funRedex
+            then return True
+            else evalStepRef argRef
+        (LamRef x bodyRef) -> do
+            body <- readIORef bodyRef
+            maybeExpr <- substitudeRef x argRef body
+            case maybeExpr of
+                Nothing -> writeIORef exprRef body
+                Just body' -> writeIORef exprRef body'
+            return True
+
+substitudeRef :: Name -> IORef LamExprRef -> LamExprRef -> IO (Maybe LamExprRef)
+substitudeRef x argRef body = do
+    case body of
+        (VarRef y)
+            | y /= x -> return Nothing
+            | otherwise -> do
+                arg <- readIORef argRef
+                return $ Just arg
+        (LamRef y er)
+            | x == y -> return Nothing
+            | otherwise -> do
+                e <- readIORef er
+                b <- e `hasVarRef` x
+                if not b
+                then return Nothing
+                else do
+                    arg <- readIORef argRef
+                    b' <- arg `hasVarRef` y
+                    b'' <- e `hasVarRef` y
+                    if not b' || not b''
+                    then do
+                        me' <- substitudeRef x argRef e
+                        er' <- newIORef $ fromJust me'
+                        return $ Just $ LamRef y er'
+                    else do
+                        y' <- firstUnusedNameRef names [arg, e]
+                        y'Ref <- newIORef $ VarRef y'
+                        me' <- substitudeRef y y'Ref e
+                        me'' <- substitudeRef x argRef $ fromJust me'
+                        er' <- newIORef $ fromJust me''
+                        return $ Just $ LamRef y' er'
+        (ApRef er1 er2) -> do
+            e1 <- readIORef er1
+            me1 <- substitudeRef x argRef e1
+            e2 <- readIORef er2
+            me2 <- substitudeRef x argRef e2
+            case (me1, me2) of
+                (Nothing, Nothing) -> return Nothing
+                (Just e1', Nothing) -> do
+                    er1' <- newIORef e1'
+                    return $ Just $ ApRef er1' er2
+                (Nothing, Just e2') -> do
+                    er2' <- newIORef e2'
+                    return $ Just $ ApRef er1 er2'
+                (Just e1', Just e2') -> do
+                    er1' <- newIORef e1'
+                    er2' <- newIORef e2'
+                    return $ Just $ ApRef er1' er2'
+
+hasVarRef :: LamExprRef -> Name -> IO Bool
+hasVarRef (VarRef y) x = return $ x == y
+hasVarRef (ApRef er1 er2) x = do
+    e1 <- readIORef er1
+    e2 <- readIORef er2
+    b1 <- hasVarRef e1 x
+    b2 <- hasVarRef e2 x
+    return $ b1 || b2
+hasVarRef (LamRef y er) x
+    | x == y = return False
+    | otherwise = do
+        e <- readIORef er
+        hasVarRef e x
+
+firstUnusedNameRef :: [Name] -> [LamExprRef] -> IO Name
+firstUnusedNameRef [] _ = error "firstUnusedName"
+firstUnusedNameRef (n:ns) exprs = do
+    bs <- mapM (`hasVarRef` n) exprs
+    if all not bs
+    then return n
+    else firstUnusedNameRef ns exprs
+
+buildLamExprRef :: LamExpr -> IO (IORef LamExprRef)
+buildLamExprRef (Var x) = newIORef $ VarRef x
+buildLamExprRef (Lam x expr) = do
+    exprRef <- buildLamExprRef expr
+    newIORef $ LamRef x exprRef
+buildLamExprRef (Ap e1 e2) = do
+    er1 <- buildLamExprRef e1
+    er2 <- buildLamExprRef e2
+    newIORef $ ApRef er1 er2
+
+unBuildLamExprRef :: LamExprRef -> IO LamExpr
+unBuildLamExprRef (VarRef x) = return $ Var x
+unBuildLamExprRef (LamRef x er) = do
+    e' <- readIORef er
+    e <- unBuildLamExprRef e'
+    return $ Lam x e
+unBuildLamExprRef (ApRef er1 er2) = do
+    e'1 <- readIORef er1
+    e'2 <- readIORef er2
+    e1 <- unBuildLamExprRef e'1
+    e2 <- unBuildLamExprRef e'2
+    return $ Ap e1 e2
+
+repeatEvalRef :: LamExpr -> IO (Int, LamExpr)
+repeatEvalRef expr = do
+    exprRef <- buildLamExprRef expr
+    go 0 exprRef
+  where
+    go n er = do
+        print n
+--        e' <- readIORef er
+--        e <- unBuildLamExprRef e'
+--        putStrLn $ showLamExpr e
+        b <- evalStepRef er
+        if b
+        then seq n $ go (n+1) er
+        else do
+            e' <- readIORef er
+            e <- unBuildLamExprRef e'
+            return (n,e)
+
+evalStep :: LamExpr -> Maybe LamExpr
+evalStep (Lam x expr) = do
+    expr' <- evalStep expr
+    return $ Lam x expr'
+evalStep (Var _) = Nothing
+evalStep (Ap expr1 expr2) = applyStep expr1 expr2
+
+applyStep :: LamExpr -> LamExpr -> Maybe LamExpr
+applyStep (Var f) arg = do
+    arg' <- evalStep arg
+    return $ Ap (Var f) $ arg'
+applyStep (Lam x expr) arg = Just $ substitude x arg expr
+applyStep (Ap expr1 expr2) arg = case applyStep expr1 expr2 of
+    Nothing -> do
+        arg' <- evalStep arg
+        return $ Ap (Ap expr1 expr2) arg'
+    Just expr -> Just $ Ap expr arg
 
 names :: [Name]
 names = map ("var"++) $ map show ([1..] :: [Integer])
@@ -54,39 +215,6 @@ substitude x arg (Lam y expr)
   where
     y' = firstUnusedName names [arg, expr]
 
-{-
-applyStep' :: LamExpr -> LamExpr -> Maybe LamExpr
-applyStep' (Var f) arg = do
-    arg' <- evalStep arg
-    return $ Ap (Var f) $ arg'
-applyStep' (Lam x expr) arg = case evalStep arg of
-    Nothing -> Just $ substitude x arg expr
-    Just arg' -> Just $ Ap (Lam x expr) arg'
-applyStep' (Ap expr1 expr2) arg = case evalStep arg of
-    Nothing -> do
-        expr <- applyStep' expr1 expr2
-        return $ Ap expr arg
-    Just arg' -> Just $ Ap (Ap expr1 expr2) arg'
--- -}
-
-applyStep :: LamExpr -> LamExpr -> Maybe LamExpr
-applyStep (Var f) arg = do
-    arg' <- evalStep arg
-    return $ Ap (Var f) $ arg'
-applyStep (Lam x expr) arg = Just $ substitude x arg expr
-applyStep (Ap expr1 expr2) arg = case applyStep expr1 expr2 of
-    Nothing -> do
-        arg' <- evalStep arg
-        return $ Ap (Ap expr1 expr2) arg'
-    Just expr -> Just $ Ap expr arg
-
-evalStep :: LamExpr -> Maybe LamExpr
-evalStep (Lam x expr) = do
-    expr' <- evalStep expr
-    return $ Lam x expr'
-evalStep (Var _) = Nothing
-evalStep (Ap expr1 expr2) = applyStep expr1 expr2
-
 repeatEval :: LamExpr -> [LamExpr]
 repeatEval expr = expr : case evalStep expr of
     Nothing -> []
@@ -103,7 +231,10 @@ main = do
     exprStr <- getContents
     let expr = readLamExpr exprStr
     putStr exprStr
-    putStrLn $ (\(n,e)-> show n ++ "\n" ++ showLamExpr e) . statistics $ repeatEval expr
+    putStrLn $ showLamExpr expr
+    (n,e) <- repeatEvalRef expr
+    putStrLn $ show n ++ "\n" ++ showLamExpr e
+--    putStrLn $ (\(n,e)-> show n ++ "\n" ++ showLamExpr e) . statistics $ repeatEval expr
 --    mapM_ putStrLn $ map showLamExpr $ repeatEval expr
 
 showLamExpr :: LamExpr -> String

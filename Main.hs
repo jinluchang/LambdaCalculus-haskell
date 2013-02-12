@@ -3,7 +3,6 @@ module Main where
 import Control.Monad
 import Data.List
 import Data.Maybe
-import qualified Data.Map as M
 import qualified Data.Set as S
 
 import Data.IORef
@@ -56,47 +55,46 @@ applyStepRef exprRef funRef argRef = do
             return True
 
 substitudeRef :: Name -> IORef LamExprRef -> LamExprRef -> IO (Maybe (IORef LamExprRef))
-substitudeRef x argRef body = do
-    case body of
-        (VarRef y)
-            | y /= x -> return Nothing
-            | otherwise -> do
-                return $ Just argRef
-        (LamRef y er)
-            | x == y -> return Nothing
-            | otherwise -> do
-                e <- readIORef er
-                b <- e `hasVarRef` x
-                if not b
-                then return Nothing
+substitudeRef x argRef body = case body of
+    (VarRef y)
+        | y /= x -> return Nothing
+        | otherwise -> do
+            return $ Just argRef
+    (ApRef er1 er2) -> do
+        e1 <- readIORef er1
+        mer1 <- substitudeRef x argRef e1
+        e2 <- readIORef er2
+        mer2 <- substitudeRef x argRef e2
+        case (mer1, mer2) of
+            (Nothing, Nothing) -> return Nothing
+            (Just er1', Nothing) -> do
+                liftM Just $ newIORef $ ApRef er1' er2
+            (Nothing, Just er2') -> do
+                liftM Just $ newIORef $ ApRef er1 er2'
+            (Just er1', Just er2') -> do
+                liftM Just $ newIORef $ ApRef er1' er2'
+    (LamRef y er)
+        | x == y -> return Nothing
+        | otherwise -> do
+            e <- readIORef er
+            b <- e `hasVarRef` x
+            if not b
+            then return Nothing
+            else do
+                arg <- readIORef argRef
+                b' <- arg `hasVarRef` y
+                b'' <- e `hasVarRef` y
+                if not b' || not b''
+                then do
+                    mer' <- substitudeRef x argRef e
+                    liftM Just $ newIORef $ LamRef y $ fromJust mer'
                 else do
-                    arg <- readIORef argRef
-                    b' <- arg `hasVarRef` y
-                    b'' <- e `hasVarRef` y
-                    if not b' || not b''
-                    then do
-                        mer' <- substitudeRef x argRef e
-                        liftM Just $ newIORef $ LamRef y $ fromJust mer'
-                    else do
-                        y' <- firstUnusedNameRef names [arg, e]
-                        y'Ref <- newIORef $ VarRef y'
-                        mer' <- substitudeRef y y'Ref e
-                        e' <- readIORef $ fromJust mer'
-                        mer'' <- substitudeRef x argRef e'
-                        liftM Just $ newIORef $ LamRef y' $ fromJust mer''
-        (ApRef er1 er2) -> do
-            e1 <- readIORef er1
-            mer1 <- substitudeRef x argRef e1
-            e2 <- readIORef er2
-            mer2 <- substitudeRef x argRef e2
-            case (mer1, mer2) of
-                (Nothing, Nothing) -> return Nothing
-                (Just er1', Nothing) -> do
-                    liftM Just $ newIORef $ ApRef er1' er2
-                (Nothing, Just er2') -> do
-                    liftM Just $ newIORef $ ApRef er1 er2'
-                (Just er1', Just er2') -> do
-                    liftM Just $ newIORef $ ApRef er1' er2'
+                    y' <- firstUnusedNameRef names [arg, e]
+                    y'Ref <- newIORef $ VarRef y'
+                    mer' <- substitudeRef y y'Ref e
+                    e' <- readIORef $ fromJust mer'
+                    mer'' <- substitudeRef x argRef e'
+                    liftM Just $ newIORef $ LamRef y' $ fromJust mer''
 
 hasVarRef :: LamExprRef -> Name -> IO Bool
 hasVarRef (VarRef y) x = return $ x == y

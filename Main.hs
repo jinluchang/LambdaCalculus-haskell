@@ -1,5 +1,6 @@
 module Main where
 
+import Control.Monad
 import Data.List
 import Data.Maybe
 import qualified Data.Map as M
@@ -46,20 +47,21 @@ applyStepRef exprRef funRef argRef = do
             else evalStepRef argRef
         (LamRef x bodyRef) -> do
             body <- readIORef bodyRef
-            maybeExpr <- substitudeRef x argRef body
-            case maybeExpr of
+            maybeExprRef <- substitudeRef x argRef body
+            case maybeExprRef of
                 Nothing -> writeIORef exprRef body
-                Just body' -> writeIORef exprRef body'
+                Just bodyRef' -> do
+                    body' <- readIORef bodyRef'
+                    writeIORef exprRef body'
             return True
 
-substitudeRef :: Name -> IORef LamExprRef -> LamExprRef -> IO (Maybe LamExprRef)
+substitudeRef :: Name -> IORef LamExprRef -> LamExprRef -> IO (Maybe (IORef LamExprRef))
 substitudeRef x argRef body = do
     case body of
         (VarRef y)
             | y /= x -> return Nothing
             | otherwise -> do
-                arg <- readIORef argRef
-                return $ Just arg
+                return $ Just argRef
         (LamRef y er)
             | x == y -> return Nothing
             | otherwise -> do
@@ -73,33 +75,28 @@ substitudeRef x argRef body = do
                     b'' <- e `hasVarRef` y
                     if not b' || not b''
                     then do
-                        me' <- substitudeRef x argRef e
-                        er' <- newIORef $ fromJust me'
-                        return $ Just $ LamRef y er'
+                        mer' <- substitudeRef x argRef e
+                        liftM Just $ newIORef $ LamRef y $ fromJust mer'
                     else do
                         y' <- firstUnusedNameRef names [arg, e]
                         y'Ref <- newIORef $ VarRef y'
-                        me' <- substitudeRef y y'Ref e
-                        me'' <- substitudeRef x argRef $ fromJust me'
-                        er' <- newIORef $ fromJust me''
-                        return $ Just $ LamRef y' er'
+                        mer' <- substitudeRef y y'Ref e
+                        e' <- readIORef $ fromJust mer'
+                        mer'' <- substitudeRef x argRef e'
+                        liftM Just $ newIORef $ LamRef y' $ fromJust mer''
         (ApRef er1 er2) -> do
             e1 <- readIORef er1
-            me1 <- substitudeRef x argRef e1
+            mer1 <- substitudeRef x argRef e1
             e2 <- readIORef er2
-            me2 <- substitudeRef x argRef e2
-            case (me1, me2) of
+            mer2 <- substitudeRef x argRef e2
+            case (mer1, mer2) of
                 (Nothing, Nothing) -> return Nothing
-                (Just e1', Nothing) -> do
-                    er1' <- newIORef e1'
-                    return $ Just $ ApRef er1' er2
-                (Nothing, Just e2') -> do
-                    er2' <- newIORef e2'
-                    return $ Just $ ApRef er1 er2'
-                (Just e1', Just e2') -> do
-                    er1' <- newIORef e1'
-                    er2' <- newIORef e2'
-                    return $ Just $ ApRef er1' er2'
+                (Just er1', Nothing) -> do
+                    liftM Just $ newIORef $ ApRef er1' er2
+                (Nothing, Just er2') -> do
+                    liftM Just $ newIORef $ ApRef er1 er2'
+                (Just er1', Just er2') -> do
+                    liftM Just $ newIORef $ ApRef er1' er2'
 
 hasVarRef :: LamExprRef -> Name -> IO Bool
 hasVarRef (VarRef y) x = return $ x == y

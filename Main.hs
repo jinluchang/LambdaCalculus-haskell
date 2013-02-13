@@ -4,6 +4,7 @@ import Control.Monad
 import Data.List
 import Data.Maybe
 import qualified Data.Set as S
+import qualified Data.Map as M
 
 import Data.IORef
 
@@ -24,6 +25,38 @@ data ExprRef a
 type Name = String
 type LamExpr = Expr Name
 type LamExprRef = ExprRef Name
+
+{-
+data ExprFun a
+    = VarFun (S.Set a) a
+    | ApFun (S.Set a) (ExprFun a) (ExprFun a)
+    | LamFun (S.Set a) (ExprFun a -> ExprFun a)
+
+type LamExprFun = ExprFun Name
+
+freeVariables :: LamExprFun -> S.Set Name
+freeVariables (VarFun vs _) = vs
+freeVariables (ApFun vs _ _) = vs
+freeVariables (LamFun vs _) = vs
+
+buildExprFun :: M.Map Name LamExprFun -> LamExpr -> LamExprFun
+buildExprFun m (Var x) = if x `M.member` m then m M.! x else VarFun (S.singleton x) x
+buildExprFun m (Ap e1 e2) = ApFun (S.union vs1 vs2) ef1 ef2  where
+    vs1 = freeVariables ef1
+    vs2 = freeVariables ef2
+    ef1 = buildExprFun m e1
+    ef2 = buildExprFun m e2
+buildExprFun m (Lam x e) = LamFun $ \arg -> buildExprFun (M.insert x arg m) e
+
+evalStepFun :: LamExprFun -> LamExprFun
+evalStepFun (VarFun x) = (VarFun x)
+evalStepFun (LamFun f) = 
+-- -}
+
+freeVariables :: LamExpr -> S.Set Name
+freeVariables (Var x) = S.singleton x
+freeVariables (Ap expr1 expr2) = S.union (freeVariables expr1) (freeVariables expr2)
+freeVariables (Lam x expr) = S.delete x $ freeVariables expr
 
 -- Return True if the expression got reduced
 evalStepRef :: IORef LamExprRef -> IO Bool
@@ -150,7 +183,7 @@ repeatEvalRef expr = do
     go 0 exprRef
   where
     go n er = do
-        print n
+--        print n
 --        e' <- readIORef er
 --        e <- unBuildLamExprRef e'
 --        putStrLn $ showLamExpr e
@@ -188,11 +221,6 @@ firstUnusedName [] _ = error "firstUnusedName"
 firstUnusedName (n:ns) exprs
     | all (not . (`hasVar` n)) exprs = n
     | otherwise = firstUnusedName ns exprs
-
-freeVariables :: LamExpr -> S.Set Name
-freeVariables (Var x) = S.singleton x
-freeVariables (Ap expr1 expr2) = S.union (freeVariables expr1) (freeVariables expr2)
-freeVariables (Lam x expr) = S.delete x $ freeVariables expr
 
 hasVar :: LamExpr -> Name -> Bool
 hasVar (Var y) x = x == y

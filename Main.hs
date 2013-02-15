@@ -4,7 +4,6 @@ import Control.Monad
 import Data.List
 import Data.Maybe
 import qualified Data.Set as S
-import qualified Data.Map as M
 
 import Data.IORef
 
@@ -22,41 +21,146 @@ data ExprRef a
     | ApRef (IORef (ExprRef a)) (IORef (ExprRef a))
     | LamRef a (IORef (ExprRef a))
 
+data ExprSKI a
+    = VarSKI a
+    | ApSKI (ExprSKI a) (ExprSKI a)
+    | SSKI
+    | KSKI
+    | ISKI
+    | FstSKI
+    | SndSKI
+
+data ExprSKIRef a
+    = VarSKIRef a
+    | ApSKIRef (IORef (ExprSKIRef a)) (IORef (ExprSKIRef a))
+    | SSKIRef
+    | KSKIRef
+    | ISKIRef
+    | FstSKIRef
+    | SndSKIRef
+
 type Name = String
 type LamExpr = Expr Name
 type LamExprRef = ExprRef Name
+type LamExprSKI = ExprSKI Name
+type LamExprSKIRef = ExprSKIRef Name
 
-{-
-data ExprFun a
-    = VarFun (S.Set a) a
-    | ApFun (S.Set a) (ExprFun a) (ExprFun a)
-    | LamFun (S.Set a) (ExprFun a -> ExprFun a)
-
-type LamExprFun = ExprFun Name
-
-freeVariables :: LamExprFun -> S.Set Name
-freeVariables (VarFun vs _) = vs
-freeVariables (ApFun vs _ _) = vs
-freeVariables (LamFun vs _) = vs
-
-buildExprFun :: M.Map Name LamExprFun -> LamExpr -> LamExprFun
-buildExprFun m (Var x) = if x `M.member` m then m M.! x else VarFun (S.singleton x) x
-buildExprFun m (Ap e1 e2) = ApFun (S.union vs1 vs2) ef1 ef2  where
-    vs1 = freeVariables ef1
-    vs2 = freeVariables ef2
-    ef1 = buildExprFun m e1
-    ef2 = buildExprFun m e2
-buildExprFun m (Lam x e) = LamFun $ \arg -> buildExprFun (M.insert x arg m) e
-
-evalStepFun :: LamExprFun -> LamExprFun
-evalStepFun (VarFun x) = (VarFun x)
-evalStepFun (LamFun f) = 
 -- -}
+-- ------------------------------------------------------------------------------------
+-- ------------------------------------------------------------------------------------
+-- ------------------------------------------------------------------------------------
+{-
 
-freeVariables :: LamExpr -> S.Set Name
-freeVariables (Var x) = S.singleton x
-freeVariables (Ap expr1 expr2) = S.union (freeVariables expr1) (freeVariables expr2)
-freeVariables (Lam x expr) = S.delete x $ freeVariables expr
+buildExprSKIRef :: ExprSKI a -> IO (IORef (ExprSKIRef a))
+buildExprSKIRef (VarSKI x) = newIORef $ VarSKIRef x
+buildExprSKIRef (ApSKI e1 e2) = do
+    er1 <- buildExprSKIRef e1
+    er2 <- buildExprSKIRef e2
+    newIORef $ ApSKIRef er1 er2
+buildExprSKIRef SSKI = newIORef $ SSKIRef
+buildExprSKIRef KSKI = newIORef $ KSKIRef
+buildExprSKIRef ISKI = newIORef $ ISKIRef
+buildExprSKIRef FstSKI = newIORef $ FstSKIRef
+buildExprSKIRef SndSKI = newIORef $ SndSKIRef
+
+unBuildExprSKIRef :: IORef (ExprSKIRef a) -> IO (ExprSKI a)
+unBuildExprSKIRef er = do
+    e <- readIORef er
+    case e of
+        (VarSKIRef x) -> return $ VarSKI x
+        (ApSKIRef er1 er2) -> do
+            e1 <- unBuildExprSKIRef er1
+            e2 <- unBuildExprSKIRef er2
+            return $ ApSKI e1 e2
+        SSKIRef -> return SSKI
+        KSKIRef -> return KSKI
+        ISKIRef -> return ISKI
+        FstSKIRef -> return FstSKI
+        SndSKIRef -> return SndSKI
+
+evalStepSKIRef :: IORef LamExprSKIRef -> IO Bool
+evalStepSKIRef
+
+-- -}
+-- ------------------------------------------------------------------------------------
+-- ------------------------------------------------------------------------------------
+-- ------------------------------------------------------------------------------------
+-- {-
+
+evalStepSKI :: LamExprSKI -> Maybe LamExprSKI
+evalStepSKI SSKI = Nothing
+evalStepSKI KSKI = Nothing
+evalStepSKI ISKI = Nothing
+evalStepSKI FstSKI = Nothing
+evalStepSKI SndSKI = Nothing
+evalStepSKI (VarSKI _) = Nothing
+evalStepSKI (ApSKI ISKI e) = Just e
+evalStepSKI (ApSKI (ApSKI KSKI e1) _) = Just e1
+evalStepSKI (ApSKI (ApSKI (ApSKI SSKI e1) e2) e3) = Just $ ApSKI (ApSKI e1 e3) (ApSKI e2 e3)
+evalStepSKI (ApSKI (ApSKI (ApSKI FstSKI e1) e2) e3) = Just $ ApSKI (ApSKI e1 e3) e2
+evalStepSKI (ApSKI (ApSKI (ApSKI SndSKI e1) e2) e3) = Just $ ApSKI e1 (ApSKI e2 e3)
+evalStepSKI (ApSKI e1 e2) = applyStepSKI e1 e2
+
+applyStepSKI :: LamExprSKI -> LamExprSKI -> Maybe LamExprSKI
+applyStepSKI e1 e2 = case evalStepSKI e1 of
+    Nothing -> case evalStepSKI e2 of
+        Nothing -> Nothing
+        Just e2' -> Just $ ApSKI e1 e2'
+    Just e1' -> Just $ ApSKI e1' e2
+
+repeatEvalSKI :: LamExprSKI -> [LamExprSKI]
+repeatEvalSKI expr = expr : case evalStepSKI expr of
+    Nothing -> []
+    Just expr' -> repeatEvalSKI expr'
+
+evalSKI :: LamExprSKI -> LamExprSKI
+evalSKI e = case evalStepSKI e of
+    Nothing -> e
+    Just e' -> evalSKI e'
+
+buildExprSKI :: (Eq a) => Expr a -> ExprSKI a
+buildExprSKI (Var x) = VarSKI x
+buildExprSKI (Ap e1 e2) = ApSKI (buildExprSKI e1) (buildExprSKI e2)
+buildExprSKI (Lam x e) = buildExprSKILam x $ buildExprSKI e
+
+buildExprSKILam :: (Eq a) => a -> ExprSKI a -> ExprSKI a
+buildExprSKILam x e | not (e `hasVarSKI` x) = ApSKI KSKI e
+buildExprSKILam x (VarSKI y)
+    | x == y = ISKI
+    | otherwise = ApSKI KSKI (VarSKI y)
+buildExprSKILam x (ApSKI e1 e2)
+    | not (e1 `hasVarSKI` x) = ApSKI (ApSKI SndSKI e1) (buildExprSKILam x e2)
+    | not (e2 `hasVarSKI` x) = ApSKI (ApSKI FstSKI (buildExprSKILam x e1)) e2
+    | otherwise = ApSKI (ApSKI SSKI (buildExprSKILam x e1)) (buildExprSKILam x e2)
+buildExprSKILam _ SSKI = ApSKI KSKI SSKI
+buildExprSKILam _ KSKI = ApSKI KSKI KSKI
+buildExprSKILam _ ISKI = ApSKI KSKI ISKI
+buildExprSKILam _ FstSKI = ApSKI KSKI FstSKI
+buildExprSKILam _ SndSKI = ApSKI KSKI SndSKI
+
+unBuildExprSKI :: LamExprSKI -> LamExpr
+unBuildExprSKI (VarSKI x) = Var x
+unBuildExprSKI (ApSKI e1 e2) = Ap (unBuildExprSKI e1) (unBuildExprSKI e2)
+unBuildExprSKI SSKI = readExpr "\\X Y Z -> (X Z) (Y Z)"
+unBuildExprSKI KSKI = readExpr "\\X Y -> X"
+unBuildExprSKI ISKI = readExpr "\\X -> X"
+unBuildExprSKI FstSKI = readExpr "\\X Y Z -> (X Z) Y"
+unBuildExprSKI SndSKI = readExpr "\\X Y Z -> X (Y Z)"
+
+hasVarSKI :: (Eq a) => ExprSKI a -> a -> Bool
+hasVarSKI SSKI _ = False
+hasVarSKI KSKI _ = False
+hasVarSKI ISKI _ = False
+hasVarSKI (VarSKI y) x = x == y
+hasVarSKI (ApSKI e1 e2) x = e1 `hasVarSKI` x || e2 `hasVarSKI` x
+hasVarSKI FstSKI _ = False
+hasVarSKI SndSKI _ = False
+
+-- -}
+-- ------------------------------------------------------------------------------------
+-- ------------------------------------------------------------------------------------
+-- ------------------------------------------------------------------------------------
+-- {-
 
 -- Return True if the expression got reduced
 evalStepRef :: IORef LamExprRef -> IO Bool
@@ -122,6 +226,7 @@ substitudeRef x argRef body = case body of
                     mer' <- substitudeRef x argRef e
                     liftM Just $ newIORef $ LamRef y $ fromJust mer'
                 else do
+--                    putStrLn "Have to find an unused variable name"
                     y' <- firstUnusedNameRef names [arg, e]
                     y'Ref <- newIORef $ VarRef y'
                     mer' <- substitudeRef y y'Ref e
@@ -154,46 +259,50 @@ firstUnusedNameRef (n:ns) exprs = do
     then return n
     else firstUnusedNameRef ns exprs
 
-buildLamExprRef :: LamExpr -> IO (IORef LamExprRef)
-buildLamExprRef (Var x) = newIORef $ VarRef x
-buildLamExprRef (Lam x expr) = do
-    exprRef <- buildLamExprRef expr
+buildExprRef :: LamExpr -> IO (IORef LamExprRef)
+buildExprRef (Var x) = newIORef $ VarRef x
+buildExprRef (Lam x expr) = do
+    exprRef <- buildExprRef expr
     newIORef $ LamRef x exprRef
-buildLamExprRef (Ap e1 e2) = do
-    er1 <- buildLamExprRef e1
-    er2 <- buildLamExprRef e2
+buildExprRef (Ap e1 e2) = do
+    er1 <- buildExprRef e1
+    er2 <- buildExprRef e2
     newIORef $ ApRef er1 er2
 
-unBuildLamExprRef :: LamExprRef -> IO LamExpr
-unBuildLamExprRef (VarRef x) = return $ Var x
-unBuildLamExprRef (LamRef x er) = do
-    e' <- readIORef er
-    e <- unBuildLamExprRef e'
-    return $ Lam x e
-unBuildLamExprRef (ApRef er1 er2) = do
-    e'1 <- readIORef er1
-    e'2 <- readIORef er2
-    e1 <- unBuildLamExprRef e'1
-    e2 <- unBuildLamExprRef e'2
-    return $ Ap e1 e2
+unBuildExprRef :: IORef LamExprRef -> IO LamExpr
+unBuildExprRef er = do
+    e <- readIORef er
+    case e of
+        (VarRef x) -> return $ Var x
+        (LamRef x er') -> do
+            e' <- unBuildExprRef er'
+            return $ Lam x e'
+        (ApRef er1 er2) -> do
+            e1 <- unBuildExprRef er1
+            e2 <- unBuildExprRef er2
+            return $ Ap e1 e2
 
-repeatEvalRef :: LamExpr -> IO (Int, LamExpr)
-repeatEvalRef expr = do
-    exprRef <- buildLamExprRef expr
-    go 0 exprRef
+evalRef :: LamExpr -> IO LamExpr
+evalRef expr = do
+    exprRef <- buildExprRef expr
+    go exprRef
   where
-    go n er = do
---        print n
+    go er = do
 --        e' <- readIORef er
 --        e <- unBuildLamExprRef e'
 --        putStrLn $ showLamExpr e
         b <- evalStepRef er
         if b
-        then seq n $ go (n+1) er
+        then go er
         else do
-            e' <- readIORef er
-            e <- unBuildLamExprRef e'
-            return (n,e)
+            e <- unBuildExprRef er
+            return e
+
+-- -}
+-- ------------------------------------------------------------------------------------
+-- ------------------------------------------------------------------------------------
+-- ------------------------------------------------------------------------------------
+-- {-
 
 evalStep :: LamExpr -> Maybe LamExpr
 evalStep (Lam x expr) = do
@@ -214,7 +323,12 @@ applyStep (Ap expr1 expr2) arg = case applyStep expr1 expr2 of
     Just expr -> Just $ Ap expr arg
 
 names :: [Name]
-names = map ("var"++) $ map show ([1..] :: [Integer])
+names = (map (\c -> [c]) "ABCDEFGHIJKLMNOPQRSTUVWXYZ" ++) . map ("VAR"++) $ map show ([1..] :: [Integer])
+
+freeVariables :: LamExpr -> S.Set Name
+freeVariables (Var x) = S.singleton x
+freeVariables (Ap expr1 expr2) = S.union (freeVariables expr1) (freeVariables expr2)
+freeVariables (Lam x expr) = S.delete x $ freeVariables expr
 
 firstUnusedName :: [Name] -> [LamExpr] -> Name
 firstUnusedName [] _ = error "firstUnusedName"
@@ -246,31 +360,48 @@ repeatEval expr = expr : case evalStep expr of
     Nothing -> []
     Just expr' -> repeatEval expr'
 
-statistics :: [a] -> (Int, a)
-statistics exprs = go 0 exprs where
-    go _ [] = error "statistics"
-    go n [e] = (n,e)
-    go n (_:es) = go (n+1) es
+eval :: LamExpr -> LamExpr
+eval e = case evalStep e of
+    Nothing -> e
+    Just e' -> eval e'
+
+-- -}
+-- ------------------------------------------------------------------------------------
+-- ------------------------------------------------------------------------------------
+-- ------------------------------------------------------------------------------------
+-- {-
 
 main :: IO ()
 main = do
     exprStr <- getContents
-    let expr = readLamExpr exprStr
+    let expr = readExpr exprStr
     putStr exprStr
-    putStrLn $ showLamExpr expr
-    (n,e) <- repeatEvalRef expr
-    putStrLn $ show n ++ "\n" ++ showLamExpr e
---    putStrLn $ (\(n,e)-> show n ++ "\n" ++ showLamExpr e) . statistics $ repeatEval expr
---    mapM_ putStrLn $ map showLamExpr $ repeatEval expr
+    putStrLn $ showExprSKI $ buildExprSKI $ expr
+    putStrLn $ showExprSKI $ evalSKI . buildExprSKI $ expr
+    e <- evalRef $ unBuildExprSKI . evalSKI . buildExprSKI $ expr
+    putStrLn $ showExpr e
+    e <- evalRef expr
+    putStrLn $ showExpr e
+--    putStrLn $ showLamExpr $ eval expr
 
-showLamExpr :: LamExpr -> String
-showLamExpr (Var x) = x
-showLamExpr (Ap expr1 expr2@(Ap _ _)) = showLamExpr expr1 ++ " (" ++ showLamExpr expr2 ++ ")"
-showLamExpr (Ap expr1 expr2) = showLamExpr expr1 ++ " " ++ showLamExpr expr2
-showLamExpr (Lam x expr) = showLamList [x] expr
+showExprSKI :: LamExprSKI -> String
+showExprSKI (VarSKI x) = x
+showExprSKI (ApSKI e1 e2@(ApSKI _ _)) = showExprSKI e1 ++ " (" ++ showExprSKI e2 ++ ")"
+showExprSKI (ApSKI e1 e2) = showExprSKI e1 ++ " " ++ showExprSKI e2
+showExprSKI SSKI = "$S"
+showExprSKI KSKI = "$K"
+showExprSKI ISKI = "$I"
+showExprSKI FstSKI = "$Fst"
+showExprSKI SndSKI = "$Snd"
 
-readLamExpr :: String -> LamExpr
-readLamExpr str = case parse pLamExpr (take 10 str) str of
+showExpr :: LamExpr -> String
+showExpr (Var x) = x
+showExpr (Ap expr1 expr2@(Ap _ _)) = showExpr expr1 ++ " (" ++ showExpr expr2 ++ ")"
+showExpr (Ap expr1 expr2) = showExpr expr1 ++ " " ++ showExpr expr2
+showExpr (Lam x expr) = showLamList [x] expr
+
+readExpr :: String -> LamExpr
+readExpr str = case parse pLamExpr (take 10 str) str of
     Left e -> error $ show e
     Right expr -> expr
 
@@ -292,7 +423,7 @@ pVar = do
 
 pName :: Parser Name
 pName = do
-    cs <- many1 (oneOf "+*!@$%^&_=" <|> alphaNum)
+    cs <- many1 (oneOf "+*!@%^&_=" <|> alphaNum)
     return cs
 
 pLam :: Parser LamExpr
@@ -312,4 +443,6 @@ genLamList (x:xs) expr = Lam x $ genLamList xs expr
 
 showLamList :: [Name] -> LamExpr -> String
 showLamList xs (Lam x expr) = showLamList (x:xs) expr
-showLamList xs expr = "(\\" ++ intercalate " " (reverse xs) ++ " -> " ++ showLamExpr expr ++ ")"
+showLamList xs expr = "(\\" ++ intercalate " " (reverse xs) ++ " -> " ++ showExpr expr ++ ")"
+
+-- -}

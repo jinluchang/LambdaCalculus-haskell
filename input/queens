@@ -77,6 +77,6 @@ define (\size -> (fix (\search n ks ->
         (foldr (\f g x -> f (g x)) id (map (search (prec n))
             (map (\k -> cons k ks) (filter (isValidNR ks) (genList size))))))) size nil nil) (\searchNR -> 
 
-(searchNQ 4)
+(searchNR 2)
 
 )))))))))))))))))))))))))))))))))))))))))))))

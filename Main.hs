@@ -80,6 +80,95 @@ unBuildExprSKIRef er = do
         SndSKIRef -> return SndSKI
         IndSKIRef er' -> unBuildExprSKIRef er'
 
+evalStackSKIRef :: [IORef LamExprSKIRef] -> [IORef LamExprSKIRef] -> IO (IORef LamExprSKIRef)
+evalStackSKIRef (n:ns) as = readIORef n >>= \ne -> case ne of
+    VarSKIRef x -> do
+        as' <- mapM (\a -> evalStackSKIRef [a] []) as
+        n' <- foldM (\n' a -> newIORef $ ApSKIRef n' a) n as'
+        return n'
+    ApSKIRef n0 a -> evalStackSKIRef (n0:n:ns) (a:as)
+    IndSKIRef n' -> case (ns,as) of
+        ([], []) -> evalStackSKIRef [n'] []
+        (n1:_, a1:_) -> do
+            writeIORef n1 $ ApSKIRef n' a1
+            evalStackSKIRef (n':ns) as
+        _ -> error "evalStackSKIRef"
+    ISKIRef -> case (ns,as) of
+        ([], []) -> return n
+        (n1:n1s, a1:a1s) -> do
+            writeIORef n1 $ IndSKIRef a1
+            evalStackSKIRef (a1:n1s) a1s
+        _ -> error "evalStackSKIRef"
+    KSKIRef -> case (ns,as) of
+        ([], []) -> return n
+        ([n1], [a1]) -> do
+            a1' <- evalStackSKIRef [a1] []
+            writeIORef n1 $ ApSKIRef n a1'
+            return n1
+        (n1:n2:n2s, a1:a2:a2s) -> do
+            writeIORef n2 $ IndSKIRef a1
+            evalStackSKIRef (a1:n2s) a2s
+        _ -> error "evalStackSKIRef"
+    SSKIRef -> case (ns,as) of
+        ([], []) -> return n
+        ([n1], [a1]) -> do
+            a1' <- evalStackSKIRef [a1] []
+            writeIORef n1 $ ApSKIRef n a1'
+            return n1
+        ([n1,n2], [a1,a2]) -> do
+            a1' <- evalStackSKIRef [a1] []
+            a2' <- evalStackSKIRef [a2] []
+            writeIORef n1 $ ApSKIRef n a1'
+            writeIORef n2 $ ApSKIRef n1 a2'
+            return n2
+        (n1:n2:n3:n3s, a1:a2:a3:a3s) -> do
+            n2' <- newIORef $ ApSKIRef a1 a3
+            a3' <- newIORef $ ApSKIRef a2 a3
+            writeIORef n3 $ ApSKIRef n2' a3'
+            evalStackSKIRef (a1:n2':n3:n3s) (a3:a3':a3s)
+        _ -> error "evalStackSKIRef"
+    FstSKIRef -> case (ns,as) of
+        ([], []) -> return n
+        ([n1], [a1]) -> do
+            a1' <- evalStackSKIRef [a1] []
+            writeIORef n1 $ ApSKIRef n a1'
+            return n1
+        ([n1,n2], [a1,a2]) -> do
+            a1' <- evalStackSKIRef [a1] []
+            a2' <- evalStackSKIRef [a2] []
+            writeIORef n1 $ ApSKIRef n a1'
+            writeIORef n2 $ ApSKIRef n1 a2'
+            return n2
+        (n1:n2:n3:n3s, a1:a2:a3:a3s) -> do
+            n2' <- newIORef $ ApSKIRef a1 a3
+            writeIORef n3 $ ApSKIRef n2' a2
+            evalStackSKIRef (a1:n2':n3:n3s) (a3:a2:a3s)
+        _ -> error "evalStackSKIRef"
+    SndSKIRef -> case (ns,as) of
+        ([], []) -> return n
+        ([n1], [a1]) -> do
+            a1' <- evalStackSKIRef [a1] []
+            writeIORef n1 $ ApSKIRef n a1'
+            return n1
+        ([n1,n2], [a1,a2]) -> do
+            a1' <- evalStackSKIRef [a1] []
+            a2' <- evalStackSKIRef [a2] []
+            writeIORef n1 $ ApSKIRef n a1'
+            writeIORef n2 $ ApSKIRef n1 a2'
+            return n2
+        (n1:n2:n3:n3s, a1:a2:a3:a3s) -> do
+            a3' <- newIORef $ ApSKIRef a2 a3
+            writeIORef n3 $ ApSKIRef a1 a3'
+            evalStackSKIRef (a1:n3:n3s) (a3':a3s)
+        _ -> error "evalStackSKIRef"
+evalStackSKIRef _ _ = error "evalStackSKIRef"
+
+evalSKIRefS :: LamExprSKI -> IO LamExprSKI
+evalSKIRefS e = do
+    er <- buildExprSKIRef e
+    er' <- evalStackSKIRef [er] []
+    unBuildExprSKIRef er'
+
 evalStepSKIRef :: IORef LamExprSKIRef -> IO (Maybe (IORef LamExprSKIRef))
 evalStepSKIRef er = readIORef er >>= \e -> case e of
     ApSKIRef er2 er1 -> readIORef er2 >>= \e2 -> case e2 of
@@ -445,7 +534,7 @@ main = do
     let expr = readExpr exprStr
     putStr exprStr
     putStrLn $ showExprSKI $ buildExprSKI $ expr
-    eSKI <- evalSKIRef . buildExprSKI $ expr
+    eSKI <- evalSKIRefS . buildExprSKI $ expr
     putStrLn $ showExprSKI $ eSKI
     e <- evalRef $ unBuildExprSKI eSKI
     putStrLn $ showExpr e

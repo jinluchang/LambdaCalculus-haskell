@@ -20,6 +20,7 @@ data ExprRef a
     = VarRef a
     | ApRef (IORef (ExprRef a)) (IORef (ExprRef a))
     | LamRef a (IORef (ExprRef a))
+    | IndRef (IORef (ExprRef a))
 
 data ExprSKI a
     = VarSKI a
@@ -319,6 +320,37 @@ hasVarSKI SndSKI _ = False
 -- ------------------------------------------------------------------------------------
 -- {-
 
+evalStackRef :: [IORef LamExprRef] -> [IORef LamExprRef] -> IO (IORef LamExprRef)
+evalStackRef (n:ns) as = readIORef n >>= \ne -> case ne of
+    VarRef x -> do
+        as' <- mapM (\a -> evalStackRef [a] []) as
+        n' <- foldM (\n' a -> newIORef $ ApRef n' a) n as'
+        return n'
+    ApRef n0 a -> evalStackRef (n0:n:ns) (a:as)
+    IndRef n' -> case (ns,as) of
+        ([], []) -> evalStackRef [n'] []
+        (n1:_, a1:_) -> do
+            writeIORef n1 $ ApRef n' a1
+            evalStackRef (n':ns) as
+        _ -> error "evalStackRef"
+    LamRef x er -> case (ns,as) of
+        ([], []) -> do
+            er' <- evalStackRef [er] []
+            writeIORef n $ LamRef x er'
+            return n
+        (n1:n1s, a1:a1s) -> do
+            e <- readIORef er
+            mn1' <- substitudeRef x a1 e
+            case mn1' of
+                Nothing -> do
+                    writeIORef n1 $ IndRef er
+                    evalStackRef (er:n1s) a1s
+                Just n1' -> do
+                    writeIORef n1 $ IndRef n1'
+                    evalStackRef (n1':n1s) a1s
+
+evalStackRef _ _ = error "evalStackRef"
+
 -- Return True if the expression got reduced
 evalStepRef :: IORef LamExprRef -> IO Bool
 evalStepRef exprRef = do
@@ -327,18 +359,19 @@ evalStepRef exprRef = do
         VarRef _ -> return False
         LamRef _ er -> evalStepRef er
         ApRef funRef argRef -> applyStepRef exprRef funRef argRef
+        _ -> error "evalStepRef"
 
 applyStepRef :: IORef LamExprRef -> IORef LamExprRef -> IORef LamExprRef -> IO Bool
 applyStepRef exprRef funRef argRef = do
     fun <- readIORef funRef
     case fun of
-        (VarRef _) -> evalStepRef argRef
-        (ApRef e1 e2) -> do
+        VarRef _ -> evalStepRef argRef
+        ApRef e1 e2 -> do
             funRedex <- applyStepRef funRef e1 e2
             if funRedex
             then return True
             else evalStepRef argRef
-        (LamRef x bodyRef) -> do
+        LamRef x bodyRef -> do
             body <- readIORef bodyRef
             maybeExprRef <- substitudeRef x argRef body
             case maybeExprRef of
@@ -350,24 +383,27 @@ applyStepRef exprRef funRef argRef = do
 
 substitudeRef :: Name -> IORef LamExprRef -> LamExprRef -> IO (Maybe (IORef LamExprRef))
 substitudeRef x argRef body = case body of
-    (VarRef y)
+    IndRef er -> do
+        e <- readIORef er
+        mer <- substitudeRef x argRef e
+        case mer of
+            Nothing -> return Nothing
+            Just er' -> return $ Just er'
+    VarRef y
         | y /= x -> return Nothing
         | otherwise -> do
             return $ Just argRef
-    (ApRef er1 er2) -> do
+    ApRef er1 er2 -> do
         e1 <- readIORef er1
         mer1 <- substitudeRef x argRef e1
         e2 <- readIORef er2
         mer2 <- substitudeRef x argRef e2
         case (mer1, mer2) of
             (Nothing, Nothing) -> return Nothing
-            (Just er1', Nothing) -> do
-                liftM Just $ newIORef $ ApRef er1' er2
-            (Nothing, Just er2') -> do
-                liftM Just $ newIORef $ ApRef er1 er2'
-            (Just er1', Just er2') -> do
-                liftM Just $ newIORef $ ApRef er1' er2'
-    (LamRef y er)
+            (Just er1', Nothing) -> liftM Just $ newIORef $ ApRef er1' er2
+            (Nothing, Just er2') -> liftM Just $ newIORef $ ApRef er1 er2'
+            (Just er1', Just er2') -> liftM Just $ newIORef $ ApRef er1' er2'
+    LamRef y er
         | x == y -> return Nothing
         | otherwise -> do
             e <- readIORef er
@@ -392,6 +428,7 @@ substitudeRef x argRef body = case body of
                     liftM Just $ newIORef $ LamRef y' $ fromJust mer''
 
 hasVarRef :: LamExprRef -> Name -> IO Bool
+hasVarRef (IndRef er) x = readIORef er >>= \e -> hasVarRef e x
 hasVarRef (VarRef y) x = return $ x == y
 hasVarRef (ApRef er1 er2) x = do
     e1 <- readIORef er1
@@ -430,14 +467,16 @@ unBuildExprRef :: IORef LamExprRef -> IO LamExpr
 unBuildExprRef er = do
     e <- readIORef er
     case e of
-        (VarRef x) -> return $ Var x
-        (LamRef x er') -> do
+        VarRef x -> return $ Var x
+        LamRef x er' -> do
             e' <- unBuildExprRef er'
             return $ Lam x e'
-        (ApRef er1 er2) -> do
+        ApRef er1 er2 -> do
             e1 <- unBuildExprRef er1
             e2 <- unBuildExprRef er2
             return $ Ap e1 e2
+        IndRef er -> do
+            unBuildExprRef er
 
 evalRef :: LamExpr -> IO LamExpr
 evalRef expr = do
@@ -451,9 +490,13 @@ evalRef expr = do
         b <- evalStepRef er
         if b
         then go er
-        else do
-            e <- unBuildExprRef er
-            return e
+        else unBuildExprRef er
+
+evalRefS :: LamExpr -> IO LamExpr
+evalRefS expr = do
+    exprRef <- buildExprRef expr
+    exprRef' <- evalStackRef [exprRef] []
+    unBuildExprRef exprRef'
 
 -- -}
 -- ------------------------------------------------------------------------------------
@@ -532,13 +575,13 @@ main :: IO ()
 main = do
     exprStr <- getContents
     let expr = readExpr exprStr
-    putStr exprStr
-    putStrLn $ showExprSKI $ buildExprSKI $ expr
+    putStrLn exprStr
+--    putStrLn $ showExprSKI $ buildExprSKI $ expr
     eSKI <- evalSKIRefS . buildExprSKI $ expr
-    putStrLn $ showExprSKI $ eSKI
-    e <- evalRef $ unBuildExprSKI eSKI
+--    putStrLn $ showExprSKI $ eSKI
+    e <- evalRefS $ unBuildExprSKI eSKI
     putStrLn $ showExpr e
---    e <- evalRef expr
+--    e <- evalRefS expr
 --    putStrLn $ showExpr e
 --    putStrLn $ showExpr $ eval expr
 

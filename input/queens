@@ -1,8 +1,11 @@
-(\f b -> b f) (\f b -> b f) \define ->
+(\f b -> b f) (\f b -> b f)
+\define ->
 
 define (\x -> x) \id ->
 define (\c x -> c) \const ->
-define (\f -> (\x -> f (x x)) (\x -> f (x x))) \fix ->
+
+define (\f -> (\x -> f (x x)) (\x -> f (x x)))
+\fix ->
 
 define (\x y -> x) \true ->
 define (\x y -> y) \false ->
@@ -17,10 +20,17 @@ define (\f -> false) \nil ->
 define (\p -> p (const (const true))) \isPair ->
 define (\p -> not (isPair p)) \isNil ->
 
-define (fix (\map f xs -> (isNil xs) nil (cons (f (car xs)) (map f (cdr xs))))) \map ->
-define (fix (\filter f xs -> (isNil xs) nil ((f (car xs)) (cons (car xs) (filter f (cdr xs)))
-                                                          (filter f (cdr xs))))) \filter ->
-define (fix (\foldr step init xs -> (isNil xs) init (step (car xs) (foldr step init (cdr xs))))) \foldr ->
+define (fix (\map f xs -> (isNil xs) nil (cons (f (car xs)) (map f (cdr xs)))))
+\map ->
+
+define (fix (\filter f xs ->
+	(isNil xs) nil ((f (car xs)) (cons (car xs) (filter f (cdr xs)))
+                                 (filter f (cdr xs)))))
+\filter ->
+
+define (fix (\foldr step init xs ->
+	(isNil xs) init (step (car xs) (foldr step init (cdr xs)))))
+\foldr ->
 
 define (\f x -> x) \0 ->
 define (\n f x -> f (n f x)) \succ ->
@@ -34,12 +44,13 @@ define (succ 5) \6 ->
 define (succ 6) \7 ->
 define (succ 7) \8 ->
 define (succ 8) \9 ->
+define (succ 9) \10 ->
 
 define (\n f x -> (n (\h g -> g (h f)) (\g -> x) id)) \prec ->
 
 define (\n m -> n succ m) \add ->
 define (\n m -> m prec n) \minus ->
-define (\n m f -> n (m f)) \mult ->
+define (\n m f -> m (n f)) \mult ->
 define (\n m -> n (mult m) 1) \exponential ->
 
 define (\n -> n (const true) false) \isPositive ->
@@ -58,23 +69,29 @@ define ((fix (\isOk n ks k -> (isNil ks)
     (and (notEqual k (car ks))
     (and (notEqual (add n k) (car ks))
     (and (notEqual k (add n (car ks)))
-         (isOk (succ n) (cdr ks) k)))))) 1) \isValidNQ ->
+         (isOk (succ n) (cdr ks) k)))))) 1)
+\isValidNQ ->
 
 define ((fix (\isOk n ks k -> (isNil ks)
     true
     (and (notEqual k (car ks))
-         (isOk (succ n) (cdr ks) k)))) 1) \isValidNR ->
+         (isOk (succ n) (cdr ks) k)))) 1)
+\isValidNR ->
 
 define (\size -> (fix (\search n ks ->
     (isZero n)
         (cons ks)
         (foldr (\f g x -> f (g x)) id (map (search (prec n))
-            (map (\k -> cons k ks) (filter (isValidNQ ks) (genList size))))))) size nil nil) \searchNQ ->
+            (map (\k -> cons k ks) (filter (isValidNQ ks) (genList size)))))))
+	size nil nil)
+\searchNQ ->
 
 define (\size -> (fix (\search n ks ->
     (isZero n)
         (cons ks)
         (foldr (\f g x -> f (g x)) id (map (search (prec n))
-            (map (\k -> cons k ks) (filter (isValidNR ks) (genList size))))))) size nil nil) \searchNR ->
+            (map (\k -> cons k ks) (filter (isValidNR ks) (genList size)))))))
+	size nil nil)
+\searchNR ->
 
 (searchNQ 8)

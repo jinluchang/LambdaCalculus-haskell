@@ -3,7 +3,6 @@ module Main where
 import Control.Monad
 import Data.List
 import Data.Maybe
-import qualified Data.Set as S
 
 import Data.IORef
 
@@ -53,33 +52,11 @@ type LamExprSKIRef = ExprSKIRef Name
 -- ------------------------------------------------------------------------------------
 -- {-
 
-buildExprSKIRef :: ExprSKI a -> IO (IORef (ExprSKIRef a))
-buildExprSKIRef (VarSKI x) = newIORef $ VarSKIRef x
-buildExprSKIRef (ApSKI e1 e2) = do
-    er1 <- buildExprSKIRef e1
-    er2 <- buildExprSKIRef e2
-    newIORef $ ApSKIRef er1 er2
-buildExprSKIRef SSKI = newIORef $ SSKIRef
-buildExprSKIRef KSKI = newIORef $ KSKIRef
-buildExprSKIRef ISKI = newIORef $ ISKIRef
-buildExprSKIRef FstSKI = newIORef $ FstSKIRef
-buildExprSKIRef SndSKI = newIORef $ SndSKIRef
-
-unBuildExprSKIRef :: IORef (ExprSKIRef a) -> IO (ExprSKI a)
-unBuildExprSKIRef er = do
-    e <- readIORef er
-    case e of
-        VarSKIRef x -> return $ VarSKI x
-        ApSKIRef er1 er2 -> do
-            e1 <- unBuildExprSKIRef er1
-            e2 <- unBuildExprSKIRef er2
-            return $ ApSKI e1 e2
-        SSKIRef -> return SSKI
-        KSKIRef -> return KSKI
-        ISKIRef -> return ISKI
-        FstSKIRef -> return FstSKI
-        SndSKIRef -> return SndSKI
-        IndSKIRef er' -> unBuildExprSKIRef er'
+evalSKIRefS :: LamExprSKI -> IO LamExprSKI
+evalSKIRefS e = do
+    er <- buildExprSKIRef e
+    er' <- evalStackSKIRef [er] []
+    unBuildExprSKIRef er'
 
 evalStackSKIRef :: [IORef LamExprSKIRef] -> [IORef LamExprSKIRef] -> IO (IORef LamExprSKIRef)
 evalStackSKIRef (n:ns) as = readIORef n >>= \ne -> case ne of
@@ -164,80 +141,33 @@ evalStackSKIRef (n:ns) as = readIORef n >>= \ne -> case ne of
         _ -> error "evalStackSKIRef"
 evalStackSKIRef _ _ = error "evalStackSKIRef"
 
-evalSKIRefS :: LamExprSKI -> IO LamExprSKI
-evalSKIRefS e = do
-    er <- buildExprSKIRef e
-    er' <- evalStackSKIRef [er] []
-    unBuildExprSKIRef er'
+buildExprSKIRef :: ExprSKI a -> IO (IORef (ExprSKIRef a))
+buildExprSKIRef (VarSKI x) = newIORef $ VarSKIRef x
+buildExprSKIRef (ApSKI e1 e2) = do
+    er1 <- buildExprSKIRef e1
+    er2 <- buildExprSKIRef e2
+    newIORef $ ApSKIRef er1 er2
+buildExprSKIRef SSKI = newIORef $ SSKIRef
+buildExprSKIRef KSKI = newIORef $ KSKIRef
+buildExprSKIRef ISKI = newIORef $ ISKIRef
+buildExprSKIRef FstSKI = newIORef $ FstSKIRef
+buildExprSKIRef SndSKI = newIORef $ SndSKIRef
 
-evalStepSKIRef :: IORef LamExprSKIRef -> IO (Maybe (IORef LamExprSKIRef))
-evalStepSKIRef er = readIORef er >>= \e -> case e of
-    ApSKIRef er2 er1 -> readIORef er2 >>= \e2 -> case e2 of
-        IndSKIRef er2' -> do
-            writeIORef er $ ApSKIRef er2' er1
-            evalStepSKIRef er
-        ISKIRef -> do
-            writeIORef er $ IndSKIRef er1
-            return $ Just er1
-        ApSKIRef er4 er3 -> readIORef er4 >>= \e4 -> case e4 of
-            IndSKIRef er4' -> do
-                writeIORef er2 $ ApSKIRef er4' er3
-                evalStepSKIRef er
-            KSKIRef -> do
-                writeIORef er $ IndSKIRef er3
-                return $ Just er3
-            ApSKIRef er6 er5 -> readIORef er6 >>= \e6 -> case e6 of
-                IndSKIRef er6' -> do
-                    writeIORef er4 $ ApSKIRef er6' er5
-                    evalStepSKIRef er
-                SSKIRef -> do
-                    er2' <- newIORef $ ApSKIRef er5 er1
-                    er1' <- newIORef $ ApSKIRef er3 er1
-                    writeIORef er $ ApSKIRef er2' er1'
-                    return $ Just er
-                FstSKIRef -> do
-                    er2' <- newIORef $ ApSKIRef er5 er1
-                    writeIORef er $ ApSKIRef er2' er3
-                    return $ Just er
-                SndSKIRef -> do
-                    er1' <- newIORef $ ApSKIRef er3 er1
-                    writeIORef er $ ApSKIRef er5 er1'
-                    return $ Just er
-                _ -> applyStepSKIRef er er2 er1
-            _ -> applyStepSKIRef er er2 er1
-        _ -> applyStepSKIRef er er2 er1
-    IndSKIRef er' -> do
-        mer' <- evalStepSKIRef er'
-        return . Just $ fromMaybe er' mer'
-    _ -> return Nothing
-
-applyStepSKIRef :: IORef LamExprSKIRef -> IORef LamExprSKIRef -> IORef LamExprSKIRef -> IO (Maybe (IORef LamExprSKIRef))
-applyStepSKIRef er er2 er1 = do
-    mer2 <- evalStepSKIRef er2
-    case mer2 of
-        Nothing -> do
-            mer1 <- evalStepSKIRef er1
-            case mer1 of
-                Nothing -> return Nothing
-                Just er1' -> do
-                    writeIORef er $ ApSKIRef er2 er1'
-                    return $ Just er
-        Just er2' -> do
-            writeIORef er $ ApSKIRef er2' er1
-            return $ Just er
-
-evalSKIRef :: LamExprSKI -> IO LamExprSKI
-evalSKIRef e = do
-    er <- buildExprSKIRef e
-    er' <- go er
-    unBuildExprSKIRef er'
-  where
-    go er = do
---        unBuildExprSKIRef er >>= putStrLn . showExprSKI
-        mer <- evalStepSKIRef er
-        case mer of
-            Nothing -> return er
-            Just er' -> go er'
+unBuildExprSKIRef :: IORef (ExprSKIRef a) -> IO (ExprSKI a)
+unBuildExprSKIRef er = do
+    e <- readIORef er
+    case e of
+        VarSKIRef x -> return $ VarSKI x
+        ApSKIRef er1 er2 -> do
+            e1 <- unBuildExprSKIRef er1
+            e2 <- unBuildExprSKIRef er2
+            return $ ApSKI e1 e2
+        SSKIRef -> return SSKI
+        KSKIRef -> return KSKI
+        ISKIRef -> return ISKI
+        FstSKIRef -> return FstSKI
+        SndSKIRef -> return SndSKI
+        IndSKIRef er' -> unBuildExprSKIRef er'
 
 -- -}
 -- ------------------------------------------------------------------------------------
@@ -320,6 +250,12 @@ hasVarSKI SndSKI _ = False
 -- ------------------------------------------------------------------------------------
 -- {-
 
+evalRefS :: LamExpr -> IO LamExpr
+evalRefS expr = do
+    exprRef <- buildExprRef expr
+    exprRef' <- evalStackRef [exprRef] []
+    unBuildExprRef exprRef'
+
 evalStackRef :: [IORef LamExprRef] -> [IORef LamExprRef] -> IO (IORef LamExprRef)
 evalStackRef (n:ns) as = readIORef n >>= \ne -> case ne of
     VarRef x -> do
@@ -350,36 +286,6 @@ evalStackRef (n:ns) as = readIORef n >>= \ne -> case ne of
                     evalStackRef (n1':n1s) a1s
 
 evalStackRef _ _ = error "evalStackRef"
-
--- Return True if the expression got reduced
-evalStepRef :: IORef LamExprRef -> IO Bool
-evalStepRef exprRef = do
-    expr <- readIORef exprRef
-    case expr of
-        VarRef _ -> return False
-        LamRef _ er -> evalStepRef er
-        ApRef funRef argRef -> applyStepRef exprRef funRef argRef
-        _ -> error "evalStepRef"
-
-applyStepRef :: IORef LamExprRef -> IORef LamExprRef -> IORef LamExprRef -> IO Bool
-applyStepRef exprRef funRef argRef = do
-    fun <- readIORef funRef
-    case fun of
-        VarRef _ -> evalStepRef argRef
-        ApRef e1 e2 -> do
-            funRedex <- applyStepRef funRef e1 e2
-            if funRedex
-            then return True
-            else evalStepRef argRef
-        LamRef x bodyRef -> do
-            body <- readIORef bodyRef
-            maybeExprRef <- substitudeRef x argRef body
-            case maybeExprRef of
-                Nothing -> writeIORef exprRef body
-                Just bodyRef' -> do
-                    body' <- readIORef bodyRef'
-                    writeIORef exprRef body'
-            return True
 
 substitudeRef :: Name -> IORef LamExprRef -> LamExprRef -> IO (Maybe (IORef LamExprRef))
 substitudeRef x argRef body = case body of
@@ -478,26 +384,6 @@ unBuildExprRef er = do
         IndRef er -> do
             unBuildExprRef er
 
-evalRef :: LamExpr -> IO LamExpr
-evalRef expr = do
-    exprRef <- buildExprRef expr
-    go exprRef
-  where
-    go er = do
---        e' <- readIORef er
---        e <- unBuildLamExprRef e'
---        putStrLn $ showExpr e
-        b <- evalStepRef er
-        if b
-        then go er
-        else unBuildExprRef er
-
-evalRefS :: LamExpr -> IO LamExpr
-evalRefS expr = do
-    exprRef <- buildExprRef expr
-    exprRef' <- evalStackRef [exprRef] []
-    unBuildExprRef exprRef'
-
 -- -}
 -- ------------------------------------------------------------------------------------
 -- ------------------------------------------------------------------------------------
@@ -524,11 +410,6 @@ applyStep (Ap expr1 expr2) arg = case applyStep expr1 expr2 of
 
 names :: [Name]
 names = (map (\c -> [c]) "ABCDEFGHIJKLMNOPQRSTUVWXYZ" ++) . map ("VAR"++) $ map show ([1..] :: [Integer])
-
-freeVariables :: LamExpr -> S.Set Name
-freeVariables (Var x) = S.singleton x
-freeVariables (Ap expr1 expr2) = S.union (freeVariables expr1) (freeVariables expr2)
-freeVariables (Lam x expr) = S.delete x $ freeVariables expr
 
 firstUnusedName :: [Name] -> [LamExpr] -> Name
 firstUnusedName [] _ = error "firstUnusedName"

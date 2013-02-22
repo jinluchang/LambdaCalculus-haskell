@@ -9,6 +9,8 @@ import Data.IORef
 import Text.Parsec
 import Text.Parsec.String
 
+import System.Environment
+
 data Expr a
     = Var a
     | Ap (Expr a) (Expr a)
@@ -454,12 +456,13 @@ eval e = case evalStep e of
 
 main :: IO ()
 main = do
+    args <- getArgs
     exprStr <- getContents
     let expr = readExpr exprStr
     putStrLn exprStr
---    putStrLn $ showExprSKI $ buildExprSKI $ expr
+    if "-v" `elem` args then putStrLn $ showExprSKI $ buildExprSKI $ expr else return ()
     eSKI <- evalSKIRefS . buildExprSKI $ expr
---    putStrLn $ showExprSKI $ eSKI
+    if "-v" `elem` args then putStrLn $ showExprSKI $ eSKI else return ()
     e <- evalRefS $ unBuildExprSKI eSKI
     putStrLn $ showExpr e
 --    e <- evalRefS expr

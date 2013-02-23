@@ -51,7 +51,7 @@ define (\n f x -> (n (\h g -> g (h f)) (\g -> x) id)) \prec ->
 define (\n m -> n succ m) \add ->
 define (\n m -> m prec n) \minus ->
 define (\n m f -> m (n f)) \mult ->
-define (\n m -> n (mult m) 1) \exponential ->
+define (\n m -> m (mult n) 1) \exponential ->
 
 define (\n -> n (const true) false) \isPositive ->
 define (\n -> n (const false) true) \isZero ->

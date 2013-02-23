@@ -29,8 +29,8 @@ data ExprSKI a
     | SSKI
     | KSKI
     | ISKI
-    | FstSKI
-    | SndSKI
+    | CSKI
+    | BSKI
 
 data ExprSKIRef a
     = VarSKIRef a
@@ -38,8 +38,8 @@ data ExprSKIRef a
     | SSKIRef
     | KSKIRef
     | ISKIRef
-    | FstSKIRef
-    | SndSKIRef
+    | CSKIRef
+    | BSKIRef
     | IndSKIRef (IORef (ExprSKIRef a))
 
 type Name = String
@@ -107,7 +107,7 @@ evalStackSKIRef (n:ns) as = readIORef n >>= \ne -> case ne of
             writeIORef n3 $ ApSKIRef n2' a3'
             evalStackSKIRef (a1:n2':n3:n3s) (a3:a3':a3s)
         _ -> error "evalStackSKIRef"
-    FstSKIRef -> case (ns,as) of
+    CSKIRef -> case (ns,as) of
         ([], []) -> return n
         ([n1], [a1]) -> do
             a1' <- evalStackSKIRef [a1] []
@@ -124,7 +124,7 @@ evalStackSKIRef (n:ns) as = readIORef n >>= \ne -> case ne of
             writeIORef n3 $ ApSKIRef n2' a2
             evalStackSKIRef (a1:n2':n3:n3s) (a3:a2:a3s)
         _ -> error "evalStackSKIRef"
-    SndSKIRef -> case (ns,as) of
+    BSKIRef -> case (ns,as) of
         ([], []) -> return n
         ([n1], [a1]) -> do
             a1' <- evalStackSKIRef [a1] []
@@ -152,8 +152,8 @@ buildExprSKIRef (ApSKI e1 e2) = do
 buildExprSKIRef SSKI = newIORef $ SSKIRef
 buildExprSKIRef KSKI = newIORef $ KSKIRef
 buildExprSKIRef ISKI = newIORef $ ISKIRef
-buildExprSKIRef FstSKI = newIORef $ FstSKIRef
-buildExprSKIRef SndSKI = newIORef $ SndSKIRef
+buildExprSKIRef CSKI = newIORef $ CSKIRef
+buildExprSKIRef BSKI = newIORef $ BSKIRef
 
 unBuildExprSKIRef :: IORef (ExprSKIRef a) -> IO (ExprSKI a)
 unBuildExprSKIRef er = do
@@ -167,8 +167,8 @@ unBuildExprSKIRef er = do
         SSKIRef -> return SSKI
         KSKIRef -> return KSKI
         ISKIRef -> return ISKI
-        FstSKIRef -> return FstSKI
-        SndSKIRef -> return SndSKI
+        CSKIRef -> return CSKI
+        BSKIRef -> return BSKI
         IndSKIRef er' -> unBuildExprSKIRef er'
 
 -- -}
@@ -181,14 +181,14 @@ evalStepSKI :: LamExprSKI -> Maybe LamExprSKI
 evalStepSKI SSKI = Nothing
 evalStepSKI KSKI = Nothing
 evalStepSKI ISKI = Nothing
-evalStepSKI FstSKI = Nothing
-evalStepSKI SndSKI = Nothing
+evalStepSKI CSKI = Nothing
+evalStepSKI BSKI = Nothing
 evalStepSKI (VarSKI _) = Nothing
 evalStepSKI (ApSKI ISKI e) = Just e
 evalStepSKI (ApSKI (ApSKI KSKI e1) _) = Just e1
 evalStepSKI (ApSKI (ApSKI (ApSKI SSKI e1) e2) e3) = Just $ ApSKI (ApSKI e1 e3) (ApSKI e2 e3)
-evalStepSKI (ApSKI (ApSKI (ApSKI FstSKI e1) e2) e3) = Just $ ApSKI (ApSKI e1 e3) e2
-evalStepSKI (ApSKI (ApSKI (ApSKI SndSKI e1) e2) e3) = Just $ ApSKI e1 (ApSKI e2 e3)
+evalStepSKI (ApSKI (ApSKI (ApSKI CSKI e1) e2) e3) = Just $ ApSKI (ApSKI e1 e3) e2
+evalStepSKI (ApSKI (ApSKI (ApSKI BSKI e1) e2) e3) = Just $ ApSKI e1 (ApSKI e2 e3)
 evalStepSKI (ApSKI e1 e2) = applyStepSKI e1 e2
 
 applyStepSKI :: LamExprSKI -> LamExprSKI -> Maybe LamExprSKI
@@ -210,8 +210,8 @@ evalSKI e = case evalStepSKI e of
 
 buildExprSKI :: (Eq a) => Expr a -> ExprSKI a
 buildExprSKI (Var x) = VarSKI x
-buildExprSKI (Ap e1 e2) = ApSKI (buildExprSKI e1) (buildExprSKI e2)
-buildExprSKI (Lam x e) = buildExprSKILam x $ buildExprSKI e
+buildExprSKI (Ap e1 e2) = simplifySKI $ ApSKI (buildExprSKI e1) (buildExprSKI e2)
+buildExprSKI (Lam x e) = simplifySKI $ buildExprSKILam x $ buildExprSKI e
 
 buildExprSKILam :: (Eq a) => a -> ExprSKI a -> ExprSKI a
 buildExprSKILam x e | not (e `hasVarSKI` x) = ApSKI KSKI e
@@ -219,14 +219,36 @@ buildExprSKILam x (VarSKI y)
     | x == y = ISKI
     | otherwise = ApSKI KSKI (VarSKI y)
 buildExprSKILam x (ApSKI e1 e2)
-    | not (e1 `hasVarSKI` x) = ApSKI (ApSKI SndSKI e1) (buildExprSKILam x e2)
-    | not (e2 `hasVarSKI` x) = ApSKI (ApSKI FstSKI (buildExprSKILam x e1)) e2
+    | not (e1 `hasVarSKI` x) = ApSKI (ApSKI BSKI e1) (buildExprSKILam x e2)
+    | not (e2 `hasVarSKI` x) = ApSKI (ApSKI CSKI (buildExprSKILam x e1)) e2
     | otherwise = ApSKI (ApSKI SSKI (buildExprSKILam x e1)) (buildExprSKILam x e2)
 buildExprSKILam _ SSKI = ApSKI KSKI SSKI
 buildExprSKILam _ KSKI = ApSKI KSKI KSKI
 buildExprSKILam _ ISKI = ApSKI KSKI ISKI
-buildExprSKILam _ FstSKI = ApSKI KSKI FstSKI
-buildExprSKILam _ SndSKI = ApSKI KSKI SndSKI
+buildExprSKILam _ CSKI = ApSKI KSKI CSKI
+buildExprSKILam _ BSKI = ApSKI KSKI BSKI
+
+simplifySKI :: ExprSKI a -> ExprSKI a
+simplifySKI x = fromMaybe x $ simplifySKIMaybe x
+
+simplifySKIMaybe :: ExprSKI a -> Maybe (ExprSKI a)
+simplifySKIMaybe (ApSKI BSKI ISKI) = Just ISKI
+simplifySKIMaybe (ApSKI (ApSKI BSKI x) ISKI) = Just . fromMaybe x $ simplifySKIMaybe x
+simplifySKIMaybe (ApSKI (ApSKI CSKI BSKI) ISKI) = Just ISKI
+
+simplifySKIMaybe (ApSKI ISKI x) = Just . fromMaybe x $ simplifySKIMaybe x
+simplifySKIMaybe (ApSKI (ApSKI KSKI x) _) = Just . fromMaybe x $ simplifySKIMaybe x
+simplifySKIMaybe (ApSKI (ApSKI (ApSKI CSKI x) y) z) = Just . fromMaybe e $ simplifySKIMaybe e where
+    e = ApSKI (ApSKI x z) y
+simplifySKIMaybe (ApSKI (ApSKI (ApSKI BSKI x) y) z) = Just . fromMaybe e $ simplifySKIMaybe e where
+    e = ApSKI x (ApSKI y z)
+
+simplifySKIMaybe (ApSKI e1 e2) = case simplifySKIMaybe e1 of
+    Nothing -> case simplifySKIMaybe e2 of
+        Nothing -> Nothing
+        Just e2' -> Just . fromMaybe (ApSKI e1 e2') $ simplifySKIMaybe (ApSKI e1 e2')
+    Just e1' -> Just . fromMaybe (ApSKI e1' e2) $ simplifySKIMaybe (ApSKI e1' e2)
+simplifySKIMaybe _ = Nothing
 
 unBuildExprSKI :: LamExprSKI -> LamExpr
 unBuildExprSKI (VarSKI x) = Var x
@@ -234,8 +256,8 @@ unBuildExprSKI (ApSKI e1 e2) = Ap (unBuildExprSKI e1) (unBuildExprSKI e2)
 unBuildExprSKI SSKI = readExpr "\\X Y Z -> (X Z) (Y Z)"
 unBuildExprSKI KSKI = readExpr "\\X Y -> X"
 unBuildExprSKI ISKI = readExpr "\\X -> X"
-unBuildExprSKI FstSKI = readExpr "\\X Y Z -> (X Z) Y"
-unBuildExprSKI SndSKI = readExpr "\\X Y Z -> X (Y Z)"
+unBuildExprSKI CSKI = readExpr "\\X Y Z -> (X Z) Y"
+unBuildExprSKI BSKI = readExpr "\\X Y Z -> X (Y Z)"
 
 hasVarSKI :: (Eq a) => ExprSKI a -> a -> Bool
 hasVarSKI SSKI _ = False
@@ -243,8 +265,8 @@ hasVarSKI KSKI _ = False
 hasVarSKI ISKI _ = False
 hasVarSKI (VarSKI y) x = x == y
 hasVarSKI (ApSKI e1 e2) x = e1 `hasVarSKI` x || e2 `hasVarSKI` x
-hasVarSKI FstSKI _ = False
-hasVarSKI SndSKI _ = False
+hasVarSKI CSKI _ = False
+hasVarSKI BSKI _ = False
 
 -- -}
 -- ------------------------------------------------------------------------------------
@@ -460,10 +482,10 @@ main = do
     exprStr <- getContents
     let expr = readExpr exprStr
     putStrLn exprStr
-    if "-v" `elem` args then putStrLn $ showExprSKI $ buildExprSKI $ expr else return ()
-    eSKI <- evalSKIRefS . buildExprSKI $ expr
-    if "-v" `elem` args then putStrLn $ showExprSKI $ eSKI else return ()
-    e <- evalRefS $ unBuildExprSKI eSKI
+    if "-v" `elem` args then putStrLn . showExprSKI $ simplifySKI . buildExprSKI $ expr else return ()
+    eSKI <- evalSKIRefS . simplifySKI . buildExprSKI $ expr
+    if "-v" `elem` args then putStrLn $ showExprSKI . simplifySKI $ eSKI else return ()
+    e <- evalRefS $ unBuildExprSKI . simplifySKI $ eSKI
     putStrLn $ showExpr e
 --    e <- evalRefS expr
 --    putStrLn $ showExpr e
@@ -482,8 +504,8 @@ showExprSKI (ApSKI e1 e2) = showExprSKI e1 ++ " " ++ showExprSKI e2
 showExprSKI SSKI = "$S"
 showExprSKI KSKI = "$K"
 showExprSKI ISKI = "$I"
-showExprSKI FstSKI = "$Fst"
-showExprSKI SndSKI = "$Snd"
+showExprSKI CSKI = "$C"
+showExprSKI BSKI = "$B"
 
 showExpr :: LamExpr -> String
 showExpr (Var x) = x

@@ -17,6 +17,26 @@ data Expr a
     | Lam a (Expr a)
     deriving (Eq, Show)
 
+data ExprList a
+    = VarList a
+    | ApList (ExprList a) (ExprList a)
+    | LamList [a] (ExprList a)
+
+data ExprFunc a
+    = VarFunc a
+    | FuncFunc a
+    | ApFunc (ExprFunc a) (ExprFunc a)
+
+data GlobleFunction a = GlobleFunction [a] (ExprFunc a)
+
+data ExprFuncRef a
+    = VarFuncRef a
+    | FuncFuncRef a
+    | ApFuncRef (IORef (ExprFuncRef a)) (IORef (ExprFuncRef a))
+    | IndFuncRef (IORef (ExprFuncRef a))
+
+type Env a = [(a, GlobleFunction a)]
+
 data ExprRef a
     = VarRef a
     | ApRef (IORef (ExprRef a)) (IORef (ExprRef a))
@@ -44,9 +64,14 @@ data ExprSKIRef a
 
 type Name = String
 type LamExpr = Expr Name
+type LamExprList = ExprList Name
+type LamExprFunc = ExprFunc Name
+type LamExprFuncRef = ExprFuncRef Name
+type LamEnv = Env Name
 type LamExprRef = ExprRef Name
 type LamExprSKI = ExprSKI Name
 type LamExprSKIRef = ExprSKIRef Name
+
 
 -- -}
 -- ------------------------------------------------------------------------------------
@@ -284,8 +309,7 @@ evalStackRef :: [IORef LamExprRef] -> [IORef LamExprRef] -> IO (IORef LamExprRef
 evalStackRef (n:ns) as = readIORef n >>= \ne -> case ne of
     VarRef x -> do
         as' <- mapM (\a -> evalStackRef [a] []) as
-        n' <- foldM (\n' a -> newIORef $ ApRef n' a) n as'
-        return n'
+        foldM (\n' (n'',a) -> writeIORef n'' (ApRef n' a) >> return n'') n $ zip ns as'
     ApRef n0 a -> evalStackRef (n0:n:ns) (a:as)
     IndRef n' -> case (ns,as) of
         ([], []) -> evalStackRef [n'] []
@@ -308,7 +332,7 @@ evalStackRef (n:ns) as = readIORef n >>= \ne -> case ne of
                 Just n1' -> do
                     writeIORef n1 $ IndRef n1'
                     evalStackRef (n1':n1s) a1s
-
+        _ -> error "evalStackRef"
 evalStackRef _ _ = error "evalStackRef"
 
 substitudeRef :: Name -> IORef LamExprRef -> LamExprRef -> IO (Maybe (IORef LamExprRef))
@@ -405,8 +429,143 @@ unBuildExprRef er = do
             e1 <- unBuildExprRef er1
             e2 <- unBuildExprRef er2
             return $ Ap e1 e2
-        IndRef er -> do
-            unBuildExprRef er
+        IndRef er' -> unBuildExprRef er'
+
+-- -}
+-- ------------------------------------------------------------------------------------
+-- ------------------------------------------------------------------------------------
+-- ------------------------------------------------------------------------------------
+-- {-
+
+evalLiftedRefS :: LamExpr -> IO LamExpr
+evalLiftedRefS e = do
+    er <- buildExprLiftedRef el
+    el' <- evalStackLiftedRef variableNames env [er] []
+    return $ unBuildExprList el'
+  where
+    (el, env) = buildLiftedExpr $ buildExprList e
+
+evalStackLiftedRef :: [Name] -> LamEnv -> [IORef LamExprFuncRef] -> [IORef LamExprFuncRef] -> IO LamExprList
+evalStackLiftedRef vns env (n:ns) as = readIORef n >>= \ne -> case ne of
+    IndFuncRef n' -> case (ns,as) of
+        ([], []) -> evalStackLiftedRef vns env [n'] []
+        (n1:n1s, a1:a1s) -> do
+            writeIORef n1 $ ApFuncRef n' a1
+            evalStackLiftedRef vns env (n':ns) as
+        _ -> error "evalStackLiftedRef"
+    VarFuncRef x -> do
+        as' <- mapM (\a -> evalStackLiftedRef vns env [a] []) as
+        return $ foldl (\n' a -> ApList n' a) (VarList x) as'
+    ApFuncRef n0 a -> evalStackLiftedRef vns env (n0:n:ns) (a:as)
+    FuncFuncRef f -> if diff <= 0
+        then do
+            n' <- mkInstanceRef xs body $ take argc as
+            writeIORef (ns !! (argc-1)) $ IndFuncRef n'
+            if diff < 0 then writeIORef (ns !! argc) $ ApFuncRef n' (as !! argc) else return ()
+            evalStackLiftedRef vns env (n' : drop argc ns) (drop argc as)
+        else do
+            as' <- mapM (newIORef . VarFuncRef) (take diff vns)
+            n' <- mkInstanceRef xs body $ as ++ as'
+            e <- evalStackLiftedRef (drop diff vns) env [n'] []
+            return $ LamList (take diff vns) e
+      where
+        diff = argc - length as
+        argc = length xs
+        GlobleFunction xs body = fromJust $ lookup f env
+evalStackLiftedRef _ _ _ _ = error "evalStackLiftedRef"
+
+mkInstanceRef :: [Name] -> LamExprFunc -> [IORef LamExprFuncRef] -> IO (IORef LamExprFuncRef)
+mkInstanceRef xs body as = go body where
+    env = zip xs as
+    go (FuncFunc f) = newIORef $ FuncFuncRef f
+    go (VarFunc x) = return . fromJust $ lookup x env
+    go (ApFunc e1 e2) = do
+        e1' <- go e1
+        e2' <- go e2
+        newIORef $ ApFuncRef e1' e2'
+
+buildExprLiftedRef :: LamExprFunc -> IO (IORef LamExprFuncRef)
+buildExprLiftedRef (VarFunc x) = newIORef (VarFuncRef x)
+buildExprLiftedRef (FuncFunc x) = newIORef (FuncFuncRef x)
+buildExprLiftedRef (ApFunc e1 e2) = do
+    er1 <- buildExprLiftedRef e1
+    er2 <- buildExprLiftedRef e2
+    newIORef $ ApFuncRef er1 er2
+
+-- -}
+-- ------------------------------------------------------------------------------------
+-- ------------------------------------------------------------------------------------
+-- ------------------------------------------------------------------------------------
+-- {-
+
+evalLifted :: LamExpr -> LamExpr
+evalLifted e = unBuildExprList $ evalStackLifted variableNames env [el] [] where
+    (el, env) = buildLiftedExpr $ buildExprList e
+
+evalStackLifted :: [Name] -> LamEnv -> [LamExprFunc] -> [LamExprFunc] -> LamExprList
+evalStackLifted vns env (n:ns) as = case n of
+    VarFunc x -> foldl (\n' a -> ApList n' a) (VarList x) $ map (\a -> evalStackLifted vns env [a] []) as
+    ApFunc n0 a -> evalStackLifted vns env (n0:n:ns) (a:as)
+    FuncFunc f -> if diff <= 0
+        then evalStackLifted vns env ((mkInstance xs body $ take argc as) : drop argc ns) (drop argc as)
+        else LamList (take diff vns) $
+            evalStackLifted (drop diff vns) env [mkInstance xs body $ as ++ map VarFunc (take diff vns)] []
+      where
+        diff = argc - length as
+        argc = length xs
+        GlobleFunction xs body = fromJust $ lookup f env
+evalStackLifted _ _ _ _ = error "evalStackLifted"
+
+mkInstance :: [Name] -> LamExprFunc -> [LamExprFunc] -> LamExprFunc
+mkInstance xs body as = go body where
+    env = zip xs as
+    go (VarFunc x) = fromJust $ lookup x env
+    go (ApFunc e1 e2) = ApFunc (go e1) (go e2)
+    go (FuncFunc f) = FuncFunc f
+
+buildLiftedExpr :: LamExprList -> (LamExprFunc, LamEnv)
+buildLiftedExpr = snd . buildEnvGen functionNames [] . eliminatingFreeVariables
+
+functionNames :: [Name]
+functionNames = map ("$Func" ++) $ map show ([1..] :: [Integer])
+
+variableNames :: [Name]
+variableNames = map ("$Var" ++) $ map show ([1..] :: [Integer])
+
+buildEnvGen :: [Name] -> LamEnv -> LamExprList -> ([Name], (LamExprFunc, LamEnv))
+buildEnvGen fns env (VarList x) = (fns, (VarFunc x, env))
+buildEnvGen fns env (ApList e1 e2) = (fns'', (ApFunc e1' e2', env'')) where
+    (fns', (e1', env')) = buildEnvGen fns env e1
+    (fns'', (e2', env'')) = buildEnvGen fns' env' e2
+buildEnvGen fns env (LamList xs e) = (tail fns', (FuncFunc (head fns'), (head fns', GlobleFunction xs e'):env')) where
+    (fns', (e', env')) = buildEnvGen fns env e
+
+eliminatingFreeVariables :: LamExprList -> LamExprList
+eliminatingFreeVariables (VarList x) = VarList x
+eliminatingFreeVariables (ApList e1 e2) = ApList (eliminatingFreeVariables e1) (eliminatingFreeVariables e2)
+eliminatingFreeVariables (LamList xs e) = foldl ApList b $ map VarList xs' where
+    b = LamList (xs' ++ xs) e'
+    xs' = freeVariables e' \\ xs
+    e' = eliminatingFreeVariables e
+
+freeVariables :: LamExprList -> [Name]
+freeVariables (VarList x) = [x]
+freeVariables (ApList e1 e2) = union (freeVariables e1) (freeVariables e2)
+freeVariables (LamList xs e) = freeVariables e \\ xs
+
+buildExprList :: LamExpr -> LamExprList
+buildExprList (Var x) = VarList x
+buildExprList (Ap e1 e2) = ApList (buildExprList e1) (buildExprList e2)
+buildExprList (Lam x e) = buildExprListLam (x:) e
+
+buildExprListLam :: ([Name] -> [Name]) -> LamExpr -> LamExprList
+buildExprListLam gxs (Lam x e) = buildExprListLam (gxs . (x:)) e
+buildExprListLam gxs e = LamList (gxs []) $ buildExprList e
+
+unBuildExprList :: LamExprList -> LamExpr
+unBuildExprList (VarList x) = Var x
+unBuildExprList (ApList e1 e2) = Ap (unBuildExprList e1) (unBuildExprList e2)
+unBuildExprList (LamList xs e) = genLamList xs $ unBuildExprList e
 
 -- -}
 -- ------------------------------------------------------------------------------------
@@ -482,14 +641,16 @@ main = do
     exprStr <- getContents
     let expr = readExpr exprStr
     putStrLn exprStr
-    if "-v" `elem` args then putStrLn . showExprSKI $ simplifySKI . buildExprSKI $ expr else return ()
-    eSKI <- evalSKIRefS . simplifySKI . buildExprSKI $ expr
-    if "-v" `elem` args then putStrLn $ showExprSKI . simplifySKI $ eSKI else return ()
-    e <- evalRefS $ unBuildExprSKI . simplifySKI $ eSKI
-    putStrLn $ showExpr e
---    e <- evalRefS expr
+    if "-v" `elem` args then putStrLn $ showLiftedExpr . buildLiftedExpr . buildExprList $ expr else return ()
+--    if "-v" `elem` args then putStrLn $ showExpr expr else return ()
+--    if "-v" `elem` args then putStrLn . showExprSKI $ simplifySKI . buildExprSKI $ expr else return ()
+--    eSKI <- evalSKIRefS . simplifySKI . buildExprSKI $ expr
+--    if "-v" `elem` args then putStrLn $ showExprSKI . simplifySKI $ eSKI else return ()
+--    e <- evalRefS $ unBuildExprSKI . simplifySKI $ eSKI
 --    putStrLn $ showExpr e
---    putStrLn $ showExpr $ eval expr
+    e' <- evalLiftedRefS expr
+    putStrLn $ showExpr e'
+--    putStrLn $ showExpr . evalLifted $ expr
 
 -- -}
 -- ------------------------------------------------------------------------------------
@@ -512,6 +673,19 @@ showExpr (Var x) = x
 showExpr (Ap expr1 expr2@(Ap _ _)) = showExpr expr1 ++ " (" ++ showExpr expr2 ++ ")"
 showExpr (Ap expr1 expr2) = showExpr expr1 ++ " " ++ showExpr expr2
 showExpr (Lam x expr) = showLamList [x] expr
+
+showLiftedExpr :: (LamExprFunc, LamEnv) -> String
+showLiftedExpr (e, env) = showEnv env ++ "\n" ++ showExprFunc e ++ "\n"
+
+showExprFunc :: LamExprFunc -> String
+showExprFunc (VarFunc x) = x
+showExprFunc (FuncFunc x) = x
+showExprFunc (ApFunc e1 e2@(ApFunc _ _)) = showExprFunc e1 ++ " (" ++ showExprFunc e2 ++ ")"
+showExprFunc (ApFunc e1 e2) = showExprFunc e1 ++ " " ++ showExprFunc e2
+
+showEnv :: LamEnv -> String
+showEnv = unlines . map go where
+    go (fn, GlobleFunction xs e) = fn ++ " " ++ intercalate " " xs ++ " = " ++ showExprFunc e
 
 readExpr :: String -> LamExpr
 readExpr str = case parse pLamExpr (take 10 str) str of

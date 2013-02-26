@@ -37,6 +37,16 @@ data ExprFuncRef a
 
 type Env a = [(a, GlobleFunction a)]
 
+data GlobleFunctionCompiled a = GlobleFunctionCompiled Int ([IORef (ExprFuncCRef a)] -> IO (IORef (ExprFuncCRef a)))
+
+data ExprFuncCRef a
+    = VarFuncCRef a
+    | FuncFuncCRef (IORef (GlobleFunctionCompiled a))
+    | ApFuncCRef (IORef (ExprFuncCRef a)) (IORef (ExprFuncCRef a))
+    | IndFuncCRef (IORef (ExprFuncCRef a))
+
+type EnvC a = [(a, IORef (GlobleFunctionCompiled a))]
+
 data ExprRef a
     = VarRef a
     | ApRef (IORef (ExprRef a)) (IORef (ExprRef a))
@@ -67,7 +77,9 @@ type LamExpr = Expr Name
 type LamExprList = ExprList Name
 type LamExprFunc = ExprFunc Name
 type LamExprFuncRef = ExprFuncRef Name
+type LamExprFuncCRef = ExprFuncCRef Name
 type LamEnv = Env Name
+type LamEnvC = EnvC Name
 type LamExprRef = ExprRef Name
 type LamExprSKI = ExprSKI Name
 type LamExprSKIRef = ExprSKIRef Name
@@ -439,11 +451,11 @@ unBuildExprRef er = do
 
 evalLiftedRefS :: LamExpr -> IO LamExpr
 evalLiftedRefS e = do
-    er <- buildExprLiftedRef el
+    er <- buildExprLiftedRef ef
     el' <- evalStackLiftedRef variableNames env [er] []
     return $ unBuildExprList el'
   where
-    (el, env) = buildLiftedExpr $ buildExprList e
+    (ef, env) = buildLiftedExpr $ buildExprList e
 
 evalStackLiftedRef :: [Name] -> LamEnv -> [IORef LamExprFuncRef] -> [IORef LamExprFuncRef] -> IO LamExprList
 evalStackLiftedRef vns env (n:ns) as = readIORef n >>= \ne -> case ne of
@@ -491,6 +503,76 @@ buildExprLiftedRef (ApFunc e1 e2) = do
     er1 <- buildExprLiftedRef e1
     er2 <- buildExprLiftedRef e2
     newIORef $ ApFuncRef er1 er2
+
+-- -}
+-- ------------------------------------------------------------------------------------
+-- ------------------------------------------------------------------------------------
+-- ------------------------------------------------------------------------------------
+-- {-
+
+evalLiftedCRefS :: LamExpr -> IO LamExpr
+evalLiftedCRefS e = do
+    er <- buildExprLiftedCRef env ef
+    el' <- evalStackLiftedCRef variableNames [er] []
+    return $ unBuildExprList el'
+  where
+    (ef, env) = buildLiftedExpr $ buildExprList e
+
+evalStackLiftedCRef :: [Name] -> [IORef LamExprFuncCRef] -> [IORef LamExprFuncCRef] -> IO LamExprList
+evalStackLiftedCRef vns (n:ns) as = readIORef n >>= \ne -> case ne of
+    IndFuncCRef n' -> case (ns,as) of
+        ([], []) -> evalStackLiftedCRef vns [n'] []
+        (n1:n1s, a1:a1s) -> do
+            writeIORef n1 $ ApFuncCRef n' a1
+            evalStackLiftedCRef vns (n':ns) as
+        _ -> error "evalStackLiftedCRef"
+    VarFuncCRef x -> do
+        as' <- mapM (\a -> evalStackLiftedCRef vns [a] []) as
+        return $ foldl (\n' a -> ApList n' a) (VarList x) as'
+    ApFuncCRef n0 a -> evalStackLiftedCRef vns (n0:n:ns) (a:as)
+    FuncFuncCRef fr -> readIORef fr >>= \(GlobleFunctionCompiled argc func) -> do
+        let as' = drop (argc - 1) as
+            ns' = drop (argc - 1) ns
+        if not (null $ as')
+        then do
+            n' <- func as
+            writeIORef (head ns') $ IndFuncCRef n'
+            if not (null $ tail as') then writeIORef (ns' !! 1) $ ApFuncCRef n' (as' !! 1) else return ()
+            evalStackLiftedCRef vns (n' : drop argc ns) (tail as')
+        else do
+            let diff = argc - length as
+            asPad <- mapM (newIORef . VarFuncCRef) (take diff vns)
+            n' <- func $ as ++ asPad
+            e <- evalStackLiftedCRef (drop diff vns) [n'] []
+            return $ LamList (take diff vns) e
+evalStackLiftedCRef _ _ _ = error "evalStackLiftedCRef"
+
+buildExprLiftedCRef :: LamEnv -> LamExprFunc -> IO (IORef LamExprFuncCRef)
+buildExprLiftedCRef env e = do
+    envC <- liftM (zip (map fst env)) . mapM newIORef $ replicate len (GlobleFunctionCompiled 0 (return . head))
+    mapM_ (compileF envC) env
+    compile envC e
+  where
+    len = length env
+    compile _    (VarFunc x) = newIORef $ VarFuncCRef x
+    compile envC (FuncFunc f) = newIORef . FuncFuncCRef . fromJust $ lookup f envC
+    compile envC (ApFunc e1 e2) = do
+        er1 <- compile envC e1
+        er2 <- compile envC e2
+        newIORef $ ApFuncCRef er1 er2
+    compileF envC (f, GlobleFunction xs fe) = writeIORef (fromJust $ lookup f envC) $
+        GlobleFunctionCompiled (length xs) $ genFunc envC xs fe
+    genFunc _    xs (VarFunc x) = return . (!! n) where
+        n = fromJust $ elemIndex x xs
+    genFunc envC _  (FuncFunc f) = const fr where
+        fr = newIORef $ FuncFuncCRef (fromJust $ lookup f envC)
+    genFunc envC xs (ApFunc e1 e2) = \args -> do
+        er1 <- f1 args
+        er2 <- f2 args
+        newIORef $ ApFuncCRef er1 er2
+      where
+        f1 = genFunc envC xs e1
+        f2 = genFunc envC xs e2
 
 -- -}
 -- ------------------------------------------------------------------------------------
@@ -648,7 +730,7 @@ main = do
 --    if "-v" `elem` args then putStrLn $ showExprSKI . simplifySKI $ eSKI else return ()
 --    e <- evalRefS $ unBuildExprSKI . simplifySKI $ eSKI
 --    putStrLn $ showExpr e
-    e' <- evalLiftedRefS expr
+    e' <- evalLiftedCRefS expr
     putStrLn $ showExpr e'
 --    putStrLn $ showExpr . evalLifted $ expr
 

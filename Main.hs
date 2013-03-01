@@ -84,6 +84,108 @@ type LamExprRef = ExprRef Name
 type LamExprSKI = ExprSKI Name
 type LamExprSKIRef = ExprSKIRef Name
 
+-- -}
+-- ------------------------------------------------------------------------------------
+-- ------------------------------------------------------------------------------------
+-- ------------------------------------------------------------------------------------
+-- {-
+
+evalSKIRefSP :: LamExpr -> IO LamExpr
+evalSKIRefSP e = do
+    er <- buildExprSKIRef . simplifySKI . buildExprSKI $ e
+    evalStackSKIPadRef variableNames [er] []
+
+evalStackSKIPadRef :: [Name] -> [IORef LamExprSKIRef] -> [IORef LamExprSKIRef] -> IO LamExpr
+evalStackSKIPadRef vns (n:ns) as = readIORef n >>= \ne -> case ne of
+    VarSKIRef x -> do
+        as' <- mapM (\a -> evalStackSKIPadRef vns [a] []) as
+        return $ foldl (\ne' a -> Ap ne' a) (Var x) as'
+    ApSKIRef n0 a -> evalStackSKIPadRef vns (n0:n:ns) (a:as)
+    IndSKIRef n' -> case (ns,as) of
+        ([], []) -> evalStackSKIPadRef vns [n'] []
+        (n1:_, a1:_) -> do
+            writeIORef n1 $ ApSKIRef n' a1
+            evalStackSKIPadRef vns (n':ns) as
+        _ -> error "evalStackSKIPadRef"
+    ISKIRef -> case (ns,as) of
+        ([], []) -> return . readExpr $ "\\X -> X"
+        (n1:n1s, a1:a1s) -> do
+            writeIORef n1 $ IndSKIRef a1
+            evalStackSKIPadRef vns (a1:n1s) a1s
+        _ -> error "evalStackSKIPadRef"
+    KSKIRef -> case (ns,as) of
+        ([], []) -> return . readExpr $ "\\X _ -> X"
+        ([n1], [a1]) -> do
+            a1' <- evalStackSKIPadRef (tail vns) [a1] []
+            return $ Lam "_" a1'
+        (n1:n2:n2s, a1:a2:a2s) -> do
+            writeIORef n2 $ IndSKIRef a1
+            evalStackSKIPadRef vns (a1:n2s) a2s
+        _ -> error "evalStackSKIPadRef"
+    SSKIRef -> case (ns,as) of
+        ([], []) -> return . readExpr $ "\\X Y Z -> (X Z) (Y Z)"
+        ([n1], [a1]) -> do
+            a2 <- newIORef $ VarSKIRef $ vns !! 0
+            a3 <- newIORef $ VarSKIRef $ vns !! 1
+            n2' <- newIORef $ ApSKIRef a1 a3
+            a3' <- newIORef $ ApSKIRef a2 a3
+            n3' <- newIORef $ ApSKIRef n2' a3'
+            e' <- evalStackSKIPadRef (drop 2 vns) [a1,n2',n3'] [a3,a3']
+            return . Lam (vns !! 0) . Lam (vns !! 1) $ e'
+        ([n1,n2], [a1,a2]) -> do
+            a3 <- newIORef $ VarSKIRef $ head vns
+            n2' <- newIORef $ ApSKIRef a1 a3
+            a3' <- newIORef $ ApSKIRef a2 a3
+            n3' <- newIORef $ ApSKIRef n2' a3'
+            e' <- evalStackSKIPadRef (tail vns) [a1,n2',n3'] [a3,a3']
+            return . Lam (head vns) $ e'
+        (n1:n2:n3:n3s, a1:a2:a3:a3s) -> do
+            n2' <- newIORef $ ApSKIRef a1 a3
+            a3' <- newIORef $ ApSKIRef a2 a3
+            writeIORef n3 $ ApSKIRef n2' a3'
+            evalStackSKIPadRef vns (a1:n2':n3:n3s) (a3:a3':a3s)
+        _ -> error "evalStackSKIPadRef"
+    CSKIRef -> case (ns,as) of
+        ([], []) -> return . readExpr $ "\\X Y Z -> (X Z) Y"
+        ([n1], [a1]) -> do
+            a2 <- newIORef $ VarSKIRef $ vns !! 0
+            a3 <- newIORef $ VarSKIRef $ vns !! 1
+            n2' <- newIORef $ ApSKIRef a1 a3
+            n3' <- newIORef $ ApSKIRef n2' a2
+            e' <- evalStackSKIPadRef (drop 2 vns) [a1,n2',n3'] [a3,a2]
+            return . Lam (vns !! 0) . Lam (vns !! 1) $ e'
+        ([n1,n2], [a1,a2]) -> do
+            a3 <- newIORef $ VarSKIRef $ head vns
+            n2' <- newIORef $ ApSKIRef a1 a3
+            n3' <- newIORef $ ApSKIRef n2' a2
+            e' <- evalStackSKIPadRef (tail vns) [a1,n2',n3'] [a3,a2]
+            return . Lam (head vns) $ e'
+        (n1:n2:n3:n3s, a1:a2:a3:a3s) -> do
+            n2' <- newIORef $ ApSKIRef a1 a3
+            writeIORef n3 $ ApSKIRef n2' a2
+            evalStackSKIPadRef vns (a1:n2':n3:n3s) (a3:a2:a3s)
+        _ -> error "evalStackSKIPadRef"
+    BSKIRef -> case (ns,as) of
+        ([], []) -> return . readExpr $ "\\X Y Z -> X (Y Z)"
+        ([n1], [a1]) -> do
+            a2 <- newIORef $ VarSKIRef $ vns !! 0
+            a3 <- newIORef $ VarSKIRef $ vns !! 1
+            a3' <- newIORef $ ApSKIRef a2 a3
+            n3' <- newIORef $ ApSKIRef a1 a3'
+            e' <- evalStackSKIPadRef (drop 2 vns) [a1,n3'] [a3']
+            return . Lam (vns !! 0) . Lam (vns !! 1) $ e'
+        ([n1,n2], [a1,a2]) -> do
+            a3 <- newIORef $ VarSKIRef $ head vns
+            a3' <- newIORef $ ApSKIRef a2 a3
+            n3' <- newIORef $ ApSKIRef a1 a3'
+            e' <- evalStackSKIPadRef (tail vns) [a1,n3'] [a3']
+            return . Lam (head vns) $ e'
+        (n1:n2:n3:n3s, a1:a2:a3:a3s) -> do
+            a3' <- newIORef $ ApSKIRef a2 a3
+            writeIORef n3 $ ApSKIRef a1 a3'
+            evalStackSKIPadRef vns (a1:n3:n3s) (a3':a3s)
+        _ -> error "evalStackSKIPadRef"
+evalStackSKIPadRef _ _ _ = error "evalStackSKIPadRef"
 
 -- -}
 -- ------------------------------------------------------------------------------------
@@ -91,11 +193,12 @@ type LamExprSKIRef = ExprSKIRef Name
 -- ------------------------------------------------------------------------------------
 -- {-
 
-evalSKIRefS :: LamExprSKI -> IO LamExprSKI
+evalSKIRefS :: LamExpr -> IO LamExpr
 evalSKIRefS e = do
-    er <- buildExprSKIRef e
+    er <- buildExprSKIRef . simplifySKI . buildExprSKI $ e
     er' <- evalStackSKIRef [er] []
-    unBuildExprSKIRef er'
+    e' <- liftM unBuildExprSKI $ unBuildExprSKIRef er'
+    evalRefS e'
 
 evalStackSKIRef :: [IORef LamExprSKIRef] -> [IORef LamExprSKIRef] -> IO (IORef LamExprSKIRef)
 evalStackSKIRef (n:ns) as = readIORef n >>= \ne -> case ne of
@@ -724,15 +827,10 @@ main = do
     let expr = readExpr exprStr
     putStrLn exprStr
     if "-v" `elem` args then putStrLn $ showLiftedExpr . buildLiftedExpr . buildExprList $ expr else return ()
---    if "-v" `elem` args then putStrLn $ showExpr expr else return ()
---    if "-v" `elem` args then putStrLn . showExprSKI $ simplifySKI . buildExprSKI $ expr else return ()
---    eSKI <- evalSKIRefS . simplifySKI . buildExprSKI $ expr
---    if "-v" `elem` args then putStrLn $ showExprSKI . simplifySKI $ eSKI else return ()
---    e <- evalRefS $ unBuildExprSKI . simplifySKI $ eSKI
---    putStrLn $ showExpr e
-    e' <- evalLiftedCRefS expr
+--    e' <- evalRefS expr
+--    e' <- evalLiftedCRefS expr
+    e' <- evalSKIRefSP expr
     putStrLn $ showExpr e'
---    putStrLn $ showExpr . evalLifted $ expr
 
 -- -}
 -- ------------------------------------------------------------------------------------

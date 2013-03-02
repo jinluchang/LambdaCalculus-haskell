@@ -15,6 +15,13 @@ data Expr a
     | Lam a (Expr a)
     deriving (Eq, Show)
 
+data ExprBruijn a
+    = VarBruijn a
+    | BoundBruijn Int
+    | ApBruijn (ExprBruijn a) (ExprBruijn a)
+    | LamBruijn (ExprBruijn a)
+    deriving Show
+
 data ExprList a
     = VarList a
     | ApList (ExprList a) (ExprList a)
@@ -82,6 +89,52 @@ type LamEnvC = EnvC Name
 type LamExprRef = ExprRef Name
 type LamExprSKI = ExprSKI Name
 type LamExprSKIRef = ExprSKIRef Name
+type LamExprBruijn = ExprBruijn Name
+
+-- -}
+-- ------------------------------------------------------------------------------------
+-- ------------------------------------------------------------------------------------
+-- ------------------------------------------------------------------------------------
+-- {-
+
+buildExprBruijn :: Eq a => Expr a -> ExprBruijn a
+buildExprBruijn (Var x) = VarBruijn x
+buildExprBruijn (Ap e1 e2) = ApBruijn (buildExprBruijn e1) (buildExprBruijn e2)
+buildExprBruijn (Lam x e) = LamBruijn $ go 0 $ buildExprBruijn e where
+    go n (LamBruijn b) = LamBruijn (go (n+1) b)
+    go n (ApBruijn e1 e2) = ApBruijn (go n e1) (go n e2)
+    go n (VarBruijn y) | y == x = BoundBruijn n
+                       | otherwise = VarBruijn y
+    go n (BoundBruijn i) = BoundBruijn i
+
+unBuildExprBruijn :: LamExprBruijn -> LamExpr
+unBuildExprBruijn (VarBruijn x) = Var x
+unBuildExprBruijn (ApBruijn e1 e2) = Ap (unBuildExprBruijn e1) (unBuildExprBruijn e2)
+unBuildExprBruijn (LamBruijn b) = Lam x' $ unBuildExprBruijn b' where
+    x' = if b' `hasVarBruijn` x then x else "_"
+    b' = substituteBruijn (VarBruijn x) b
+    x = firstUnusedNameBruijn names [b]
+unBuildExprBruijn (BoundBruijn _) = error "unBuildExprBruijn"
+
+substituteBruijn :: ExprBruijn a -> ExprBruijn a -> ExprBruijn a
+substituteBruijn arg body = go 0 body where
+    go n (LamBruijn b) = LamBruijn (go (n+1) b)
+    go n (ApBruijn e1 e2) = ApBruijn (go n e1) (go n e2)
+    go n (VarBruijn x) = VarBruijn x
+    go n (BoundBruijn i) | i == n = arg
+                         | otherwise = BoundBruijn i
+
+firstUnusedNameBruijn :: Eq a => [a] -> [ExprBruijn a] -> a
+firstUnusedNameBruijn [] _ = error "firstUnusedNameBruijn"
+firstUnusedNameBruijn (n:ns) exprs
+    | all (not . (`hasVarBruijn` n)) exprs = n
+    | otherwise = firstUnusedNameBruijn ns exprs
+
+hasVarBruijn :: Eq a => ExprBruijn a -> a -> Bool
+hasVarBruijn (VarBruijn y) x = x == y
+hasVarBruijn (BoundBruijn _) _ = False
+hasVarBruijn (LamBruijn b) x = b `hasVarBruijn` x
+hasVarBruijn (ApBruijn e1 e2) x = e1 `hasVarBruijn` x || e2 `hasVarBruijn` x
 
 -- -}
 -- ------------------------------------------------------------------------------------
@@ -272,7 +325,6 @@ firstUnusedNameRef (n:ns) exprs = do
 -- ------------------------------------------------------------------------------------
 -- {-
 
-
 buildLiftedExpr :: LamExprList -> (LamExprFunc, LamEnv)
 buildLiftedExpr = snd . buildEnvGen functionNames [] . eliminatingFreeVariables
 
@@ -353,7 +405,7 @@ buildExprLiftedCRef env e = do
     compileF envC (f, GlobleFunction xs fe) = writeIORef (fromJust $ lookup f envC) $
         GlobleFunctionCompiled (length xs) $ genFunc envC xs fe
     genFunc _    xs (VarFunc x) = return . (!! n) where
-        n = fromJust $ elemIndex x xs
+        n = length xs - 1 - (fromJust $ elemIndex x $ reverse xs)
     genFunc envC _  (FuncFunc f) = const fr where
         fr = newIORef $ FuncFuncCRef (fromJust $ lookup f envC)
     genFunc envC xs (ApFunc e1 e2) = \args -> do
@@ -385,6 +437,12 @@ hasVar (Ap expr1 expr2) x = expr1 `hasVar` x || expr2 `hasVar` x
 hasVar (Lam y expr) x
     | x == y = False
     | otherwise = expr `hasVar` x
+
+simplifyExpr :: LamExpr -> LamExpr
+simplifyExpr (Var x) = (Var x)
+simplifyExpr (Ap e1 e2) = Ap (simplifyExpr e1) (simplifyExpr e2)
+simplifyExpr (Lam x (Ap e1 (Var y))) | not (e1 `hasVar` x) && x == y = simplifyExpr e1
+simplifyExpr (Lam x e) = Lam x $ simplifyExpr e
 
 -- -}
 -- ------------------------------------------------------------------------------------

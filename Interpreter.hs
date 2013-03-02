@@ -18,9 +18,11 @@ main = do
     if "-v" `elem` args then putStrLn $ showLiftedExpr . buildLiftedExpr . buildExprList $ expr else return ()
     if "-v" `elem` args then putStrLn $ showExprSKI . buildExprSKI $ expr else return ()
 --    e' <- evalRefS expr
+--    e' <- return $ evalLifted expr
+--    e' <- evalLiftedRefS expr
 --    e' <- evalLiftedCRefS expr
     e' <- evalSKIRefSP expr
-    putStrLn $ showExpr e'
+    putStrLn $ showExpr . simplifyExpr . unBuildExprBruijn . buildExprBruijn $ e'
 
 -- -}
 -- ------------------------------------------------------------------------------------
@@ -391,7 +393,7 @@ evalStackLiftedRef _ _ _ _ = error "evalStackLiftedRef"
 
 mkInstanceRef :: [Name] -> LamExprFunc -> [IORef LamExprFuncRef] -> IO (IORef LamExprFuncRef)
 mkInstanceRef xs body as = go body where
-    env = zip xs as
+    env = reverse $ zip xs as
     go (FuncFunc f) = newIORef $ FuncFuncRef f
     go (VarFunc x) = return . fromJust $ lookup x env
     go (ApFunc e1 e2) = do
@@ -432,7 +434,6 @@ evalStackLiftedCRef vns (n:ns) as = readIORef n >>= \ne -> case ne of
         then do
             n' <- func as
             writeIORef (head ns') $ IndFuncCRef n'
-            if not (null $ tail as') then writeIORef (ns' !! 1) $ ApFuncCRef n' (as' !! 1) else return ()
             evalStackLiftedCRef vns (n' : drop argc ns) (tail as')
         else do
             let diff = argc - length as
@@ -468,7 +469,7 @@ evalStackLifted _ _ _ _ = error "evalStackLifted"
 
 mkInstance :: [Name] -> LamExprFunc -> [LamExprFunc] -> LamExprFunc
 mkInstance xs body as = go body where
-    env = zip xs as
+    env = reverse $ zip xs as
     go (VarFunc x) = fromJust $ lookup x env
     go (ApFunc e1 e2) = ApFunc (go e1) (go e2)
     go (FuncFunc f) = FuncFunc f

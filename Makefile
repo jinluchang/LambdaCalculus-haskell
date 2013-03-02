@@ -13,4 +13,4 @@ prof :
 	ghc -prof -auto-all -Wall -O2 -o interpreter --make Interpreter.hs
 
 clean :
-	rm interpreter *.o *.hi
+	rm interpreter encode decode *.o *.hi || :

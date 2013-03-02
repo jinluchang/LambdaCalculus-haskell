@@ -61,6 +61,7 @@ data ExprSKI a
     | ISKI
     | CSKI
     | BSKI
+    deriving Eq
 
 data ExprSKIRef a
     = VarSKIRef a
@@ -92,7 +93,7 @@ type LamExprSKIRef = ExprSKIRef Name
 
 evalSKIRefSP :: LamExpr -> IO LamExpr
 evalSKIRefSP e = do
-    er <- buildExprSKIRef . simplifySKI . buildExprSKI $ e
+    er <- buildExprSKIRef . buildExprSKI $ e
     evalStackSKIPadRef variableNames [er] []
 
 evalStackSKIPadRef :: [Name] -> [IORef LamExprSKIRef] -> [IORef LamExprSKIRef] -> IO LamExpr
@@ -195,7 +196,7 @@ evalStackSKIPadRef _ _ _ = error "evalStackSKIPadRef"
 
 evalSKIRefS :: LamExpr -> IO LamExpr
 evalSKIRefS e = do
-    er <- buildExprSKIRef . simplifySKI . buildExprSKI $ e
+    er <- buildExprSKIRef . buildExprSKI $ e
     er' <- evalStackSKIRef [er] []
     e' <- liftM unBuildExprSKI $ unBuildExprSKIRef er'
     evalRefS e'
@@ -354,27 +355,51 @@ buildExprSKI (Ap e1 e2) = simplifySKI $ ApSKI (buildExprSKI e1) (buildExprSKI e2
 buildExprSKI (Lam x e) = simplifySKI $ buildExprSKILam x $ buildExprSKI e
 
 buildExprSKILam :: (Eq a) => a -> ExprSKI a -> ExprSKI a
+buildExprSKILam x (ApSKI (ApSKI SSKI KSKI) _) = ApSKI SSKI KSKI
+buildExprSKILam x m | not (m `hasVarSKI` x) = ApSKI KSKI m
+buildExprSKILam x (VarSKI _) = ISKI
+buildExprSKILam x (ApSKI m (VarSKI y)) | x == y && not (m `hasVarSKI` x) = m
+buildExprSKILam x (ApSKI (ApSKI (VarSKI y) m) (VarSKI z))
+    | y == x && z == x = buildExprSKILam x $ ApSKI (ApSKI (ApSKI (ApSKI SSKI SSKI) KSKI) (VarSKI x)) m
+{-
+buildExprSKILam x (ApSKI m (ApSKI n l)) | isCombinator m && isCombinator n =
+    buildExprSKILam x $ ApSKI (ApSKI (ApSKI SSKI (buildExprSKILam x m)) n) l
+buildExprSKILam x (ApSKI (ApSKI m n) l) | isCombinator m && isCombinator l =
+    buildExprSKILam x $ ApSKI (ApSKI (ApSKI SSKI m) (buildExprSKILam x l)) n
+buildExprSKILam x (ApSKI (ApSKI m l) (ApSKI n l')) | l == l' && isCombinator m && isCombinator n =
+    buildExprSKILam x $ ApSKI (ApSKI (ApSKI SSKI m) n) l
+buildExprSKILam x (ApSKI m n) = ApSKI (ApSKI SSKI (buildExprSKILam x m)) (buildExprSKILam x n)
+buildExprSKILam _ _ = error "buildExprSKILam"
+-- -}
+{-
 buildExprSKILam x e | not (e `hasVarSKI` x) = ApSKI KSKI e
 buildExprSKILam x (VarSKI y)
     | x == y = ISKI
     | otherwise = ApSKI KSKI (VarSKI y)
+-- -}
 buildExprSKILam x (ApSKI e1 e2)
     | not (e1 `hasVarSKI` x) = ApSKI (ApSKI BSKI e1) (buildExprSKILam x e2)
     | not (e2 `hasVarSKI` x) = ApSKI (ApSKI CSKI (buildExprSKILam x e1)) e2
     | otherwise = ApSKI (ApSKI SSKI (buildExprSKILam x e1)) (buildExprSKILam x e2)
-buildExprSKILam _ SSKI = ApSKI KSKI SSKI
-buildExprSKILam _ KSKI = ApSKI KSKI KSKI
-buildExprSKILam _ ISKI = ApSKI KSKI ISKI
-buildExprSKILam _ CSKI = ApSKI KSKI CSKI
-buildExprSKILam _ BSKI = ApSKI KSKI BSKI
 
-simplifySKI :: ExprSKI a -> ExprSKI a
+isCombinator :: ExprSKI a -> Bool
+isCombinator SSKI = True
+isCombinator KSKI = True
+isCombinator ISKI = True
+isCombinator CSKI = True
+isCombinator BSKI = True
+isCombinator (ApSKI e1 e2) = isCombinator e1 && isCombinator e2
+isCombinator _ = False
+
+simplifySKI :: Eq a => ExprSKI a -> ExprSKI a
 simplifySKI x = fromMaybe x $ simplifySKIMaybe x
 
-simplifySKIMaybe :: ExprSKI a -> Maybe (ExprSKI a)
+simplifySKIMaybe :: Eq a => ExprSKI a -> Maybe (ExprSKI a)
 simplifySKIMaybe (ApSKI BSKI ISKI) = Just ISKI
 simplifySKIMaybe (ApSKI (ApSKI BSKI x) ISKI) = Just . fromMaybe x $ simplifySKIMaybe x
 simplifySKIMaybe (ApSKI (ApSKI CSKI BSKI) ISKI) = Just ISKI
+simplifySKIMaybe (ApSKI (ApSKI m l) (ApSKI n l')) | l == l' = Just . fromMaybe e $ simplifySKIMaybe e where
+    e = ApSKI (ApSKI (ApSKI SSKI m) n) l
 
 simplifySKIMaybe (ApSKI ISKI x) = Just . fromMaybe x $ simplifySKIMaybe x
 simplifySKIMaybe (ApSKI (ApSKI KSKI x) _) = Just . fromMaybe x $ simplifySKIMaybe x

@@ -1,5 +1,6 @@
 module Parser where
 
+import Control.Arrow
 import Control.Monad
 import Data.List
 import Data.Maybe
@@ -135,6 +136,24 @@ hasVarBruijn (VarBruijn y) x = x == y
 hasVarBruijn (BoundBruijn _) _ = False
 hasVarBruijn (LamBruijn b) x = b `hasVarBruijn` x
 hasVarBruijn (ApBruijn e1 e2) x = e1 `hasVarBruijn` x || e2 `hasVarBruijn` x
+
+encodeBruijn :: Eq a => ExprBruijn a -> String
+encodeBruijn (VarBruijn _) = error "encodeBruijn"
+encodeBruijn (BoundBruijn i) = replicate (i+1) '1' ++ "0"
+encodeBruijn (LamBruijn e) = "00" ++ encodeBruijn e
+encodeBruijn (ApBruijn e1 e2) = "01" ++ encodeBruijn e1 ++ encodeBruijn e2
+
+decodeBruijn :: Eq a => String -> ExprBruijn a
+decodeBruijn = fst . go where
+    go ('1':nstr) = first (BoundBruijn . pred . length) $ span' (=='1') nstr
+    go ('0':'0':lstr) = first (LamBruijn) $ go lstr
+    go ('0':'1':e1e2str) = ((ApBruijn e1 e2), str) where
+        (e1, e2str) = go e1e2str
+        (e2, str) = go e2str
+    go _ = error "decodeBruijn"
+    span' _ [] = ([],[])
+    span' p (x:xs) | p x = let (ys,zs) = span' p xs in (x:ys,zs)
+                   | otherwise = ([x], xs)
 
 -- -}
 -- ------------------------------------------------------------------------------------
@@ -443,6 +462,12 @@ simplifyExpr (Var x) = (Var x)
 simplifyExpr (Ap e1 e2) = Ap (simplifyExpr e1) (simplifyExpr e2)
 simplifyExpr (Lam x (Ap e1 (Var y))) | not (e1 `hasVar` x) && x == y = simplifyExpr e1
 simplifyExpr (Lam x e) = Lam x $ simplifyExpr e
+
+buildBinaryList :: String -> LamExpr
+buildBinaryList [] = readExpr "\\x y -> y"
+buildBinaryList ('0':str) = Lam "z" $ Ap (Ap (Var "z") (readExpr "\\x y -> x")) (buildBinaryList str)
+buildBinaryList ('1':str) = Lam "z" $ Ap (Ap (Var "z") (readExpr "\\x y -> y")) (buildBinaryList str)
+buildBinaryList _ = error "buildBinaryList"
 
 -- -}
 -- ------------------------------------------------------------------------------------

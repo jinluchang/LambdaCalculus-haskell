@@ -1,13 +1,13 @@
-all : interpreter
+all : interpreter encode
 
 interpreter :
 	ghc -Wall -O2 -o interpreter --make Interpreter.hs
 
 encode :
-	ghc -Wall -O2 -o encode --Make Encode.hs
+	ghc -Wall -O2 -o encode --make Encode.hs
 
 decode :
-	ghc -Wall -O2 -o decode --Make Decode.hs
+	ghc -Wall -O2 -o decode --make Decode.hs
 
 prof :
 	ghc -prof -auto-all -Wall -O2 -o interpreter --make Interpreter.hs

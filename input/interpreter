@@ -1,0 +1,17 @@
+((\f b -> b f) (\f b -> b f)
+\define ->
+
+define (\x -> x) \id ->
+
+define (\f -> (\x -> f (x x)) (\x -> f (x x)))
+\fix ->
+
+define (\x y f -> f x y) \cons ->
+
+define (fix (\e c s -> s (\a t -> t (\b -> a
+	(e (\x -> b (c (\z y -> x (cons y z))) (e (\y -> c (\z -> x z (y z))))))
+	(b (c (\z -> z b)) (\s -> e (\x -> c (\z -> x (z b))) t))))))
+\evalC ->
+
+evalC id)
+

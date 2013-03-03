@@ -16,9 +16,9 @@ define (\a b -> a true b) \or ->
 define (\x y f -> f x y) \cons ->
 define (\p -> p true) \car ->
 define (\p -> p false) \cdr ->
-define (\f -> false) \nil ->
-define (\p -> p (const (const true))) \isPair ->
-define (\p -> not (isPair p)) \isNil ->
+define false \nil ->
+define (\p -> p (\_ _ _ -> false) true) \isNil ->
+define (\p -> not (isNil p)) \isPair ->
 
 define (fix (\map f xs -> (isNil xs) nil (cons (f (car xs)) (map f (cdr xs)))))
 \map ->

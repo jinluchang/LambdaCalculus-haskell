@@ -143,6 +143,18 @@ encodeBruijn (BoundBruijn i) = replicate (i+1) '1' ++ "0"
 encodeBruijn (LamBruijn e) = "00" ++ encodeBruijn e
 encodeBruijn (ApBruijn e1 e2) = "01" ++ encodeBruijn e1 ++ encodeBruijn e2
 
+encodeBoolList :: String -> String
+encodeBoolList str = "(" ++ "(\\f b -> b f) (\\f b -> b f) \\define ->\n" ++
+    "define (\\x -> x) \\id ->" ++
+    "define (\\f -> (\\x -> f (x x)) (\\x -> f (x x))) \\fix ->" ++
+    "define (\\x y -> x) \\true ->\n" ++
+    "define (\\x y -> y) \\false ->\n" ++
+    "define (\\x y -> x true) \\0 ->\n" ++
+    "define (\\x y -> x false) \\1 ->\n" ++
+    "fix (\\acc f o -> o (\\e -> acc (\\r -> f (\\z -> z e r))) (f false)) id\n" ++
+    intersperse ' ' str ++ "\n" ++
+    "false)"
+
 decodeBruijn :: Eq a => String -> ExprBruijn a
 decodeBruijn = fst . go where
     go ('1':nstr) = first (BoundBruijn . pred . length) $ span' (=='1') nstr

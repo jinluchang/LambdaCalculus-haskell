@@ -149,11 +149,15 @@ encodeBoolList str = "(" ++ "(\\f b -> b f) (\\f b -> b f) \\define ->\n" ++
     "define (\\f -> (\\x -> f (x x)) (\\x -> f (x x))) \\fix ->" ++
     "define (\\x y -> x) \\true ->\n" ++
     "define (\\x y -> y) \\false ->\n" ++
-    "define (\\x y -> x true) \\0 ->\n" ++
-    "define (\\x y -> x false) \\1 ->\n" ++
-    "fix (\\acc f o -> o (\\e -> acc (\\r -> f (\\z -> z e r))) (f false)) id\n" ++
-    intersperse ' ' str ++ "\n" ++
-    "false)"
+    "define (\\r z -> z true r) \\0 ->\n" ++
+    "define (\\r z -> z false r) \\1 ->\n" ++
+    gen "false" str "\n" ++
+    ")"
+  where
+    gen r [] = (r ++)
+    gen r ('0':ps) = ("0 (" ++) . gen r ps . (")" ++)
+    gen r ('1':ps) = ("1 (" ++) . gen r ps . (")" ++)
+    gen _ _ = error "encodeBoolList"
 
 decodeBruijn :: Eq a => String -> ExprBruijn a
 decodeBruijn = fst . go where

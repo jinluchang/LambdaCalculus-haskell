@@ -330,23 +330,23 @@ substitudeRef x argRef body = case body of
             e <- readIORef er
             b <- e `hasVarRef` x
             if not b
-            then return Nothing
-            else do
-                arg <- readIORef argRef
-                b' <- arg `hasVarRef` y
-                b'' <- e `hasVarRef` y
-                if not b' || not b''
-                then do
-                    mer' <- substitudeRef x argRef e
-                    liftM Just $ newIORef $ LamRef y $ fromJust mer'
+                then return Nothing
                 else do
---                    putStrLn "Have to find an unused variable name"
-                    y' <- firstUnusedNameRef names [arg, e]
-                    y'Ref <- newIORef $ VarRef y'
-                    mer' <- substitudeRef y y'Ref e
-                    e' <- readIORef $ fromJust mer'
-                    mer'' <- substitudeRef x argRef e'
-                    liftM Just $ newIORef $ LamRef y' $ fromJust mer''
+                    arg <- readIORef argRef
+                    b' <- arg `hasVarRef` y
+                    b'' <- e `hasVarRef` y
+                    if not b' || not b''
+                        then do
+                            mer' <- substitudeRef x argRef e
+                            liftM Just $ newIORef $ LamRef y $ fromJust mer'
+                        else do
+        --                    putStrLn "Have to find an unused variable name"
+                            y' <- firstUnusedNameRef names [arg, e]
+                            y'Ref <- newIORef $ VarRef y'
+                            mer' <- substitudeRef y y'Ref e
+                            e' <- readIORef $ fromJust mer'
+                            mer'' <- substitudeRef x argRef e'
+                            liftM Just $ newIORef $ LamRef y' $ fromJust mer''
 
 -- -}
 -- ------------------------------------------------------------------------------------
@@ -431,16 +431,16 @@ evalStackLiftedCRef vns (n:ns) as = readIORef n >>= \ne -> case ne of
         let as' = drop (argc - 1) as
             ns' = drop (argc - 1) ns
         if not (null $ as')
-        then do
-            n' <- func as
-            writeIORef (head ns') $ IndFuncCRef n'
-            evalStackLiftedCRef vns (n' : drop argc ns) (tail as')
-        else do
-            let diff = argc - length as
-            asPad <- mapM (newIORef . VarFuncCRef) (take diff vns)
-            n' <- func $ as ++ asPad
-            e <- evalStackLiftedCRef (drop diff vns) [n'] []
-            return $ LamList (take diff vns) e
+            then do
+                n' <- func as
+                writeIORef (head ns') $ IndFuncCRef n'
+                evalStackLiftedCRef vns (n' : drop argc ns) (tail as')
+            else do
+                let diff = argc - length as
+                asPad <- mapM (newIORef . VarFuncCRef) (take diff vns)
+                n' <- func $ as ++ asPad
+                e <- evalStackLiftedCRef (drop diff vns) [n'] []
+                return $ LamList (take diff vns) e
 evalStackLiftedCRef _ _ _ = error "evalStackLiftedCRef"
 
 -- -}

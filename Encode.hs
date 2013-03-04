@@ -9,5 +9,5 @@ main = do
     exprStr <- getContents
     let expr = readExpr exprStr
     if "-b" `elem` args
-    then putStrLn $ encodeBruijn . buildExprBruijn $ expr
-    else putStrLn $ encodeBoolList . encodeBruijn . buildExprBruijn $ expr
+        then putStrLn $ encodeBruijn . buildExprBruijn $ expr
+        else putStrLn $ encodeBoolList . encodeBruijn . buildExprBruijn $ expr

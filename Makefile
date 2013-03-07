@@ -1,4 +1,4 @@
-all : interpreter encode
+all : interpreter encode decode
 
 interpreter :
 	ghc -Wall -O2 -o interpreter --make Interpreter.hs

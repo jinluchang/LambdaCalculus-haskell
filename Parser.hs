@@ -485,6 +485,14 @@ buildBinaryList ('0':str) = Lam "z" $ Ap (Ap (Var "z") (readExpr "\\x y -> x")) 
 buildBinaryList ('1':str) = Lam "z" $ Ap (Ap (Var "z") (readExpr "\\x y -> y")) (buildBinaryList str)
 buildBinaryList _ = error "buildBinaryList"
 
+unBuildBinaryList :: LamExpr -> String
+unBuildBinaryList (Lam x (Lam y (Var xy))) | xy == y = []
+unBuildBinaryList (Lam z (Ap (Ap (Var z') b) bs)) = check b : unBuildBinaryList bs where
+    check (Lam x (Lam y (Var xy))) | xy == x = '0'
+                                   | xy == y = '1'
+    check _ = error "unBuildBinaryList"
+unBuildBinaryList _ = "unBuildBinaryList"
+
 -- -}
 -- ------------------------------------------------------------------------------------
 -- ------------------------------------------------------------------------------------

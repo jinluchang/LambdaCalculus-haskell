@@ -13,6 +13,20 @@ import Data.IORef
 -- ------------------------------------------------------------------------------------
 -- {-
 
+evalBFunc :: LamExpr -> LamExpr
+evalBFunc = unBuildExprBFunc . nf . buildExprBFunc where
+    nf (LamBFunc f) = LamBFunc (nf . f)
+    nf (ApBFunc fun arg) = case nf fun of
+        LamBFunc f -> f $ nf arg
+        fun' -> ApBFunc fun' $ nf arg
+    nf (VarBFunc x) = VarBFunc x
+
+-- -}
+-- ------------------------------------------------------------------------------------
+-- ------------------------------------------------------------------------------------
+-- ------------------------------------------------------------------------------------
+-- {-
+
 evalSKIRefSP :: LamExpr -> IO LamExpr
 evalSKIRefSP e = do
     er <- buildExprSKIRef . buildExprSKI $ e
@@ -212,10 +226,11 @@ evalStackSKIRef _ _ = error "evalStackSKIRef"
 -- ------------------------------------------------------------------------------------
 -- {-
 
-evalSKI :: LamExprSKI -> LamExprSKI
-evalSKI e = case evalStepSKI e of
-    Nothing -> e
-    Just e' -> evalSKI e'
+evalSKI :: LamExpr -> LamExpr
+evalSKI = eval . unBuildExprSKI . go . buildExprSKI where
+    go e = case evalStepSKI e of
+        Nothing -> e
+        Just e' -> go e'
 
 repeatEvalSKI :: LamExprSKI -> [LamExprSKI]
 repeatEvalSKI expr = expr : case evalStepSKI expr of

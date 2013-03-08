@@ -14,9 +14,10 @@ main = do
     if "-v" `elem` args then putStrLn $ showLiftedExpr . buildLiftedExpr . buildExprList $ expr else return ()
     if "-v" `elem` args then putStrLn $ showExprSKI . buildExprSKI $ expr else return ()
 --    e' <- evalRefS expr
---    e' <- return $ evalLifted expr
+--    let e' = evalSKI expr
+--    let e' = evalLifted expr
+--    let e' = evalBFunc expr
 --    e' <- evalLiftedRefS expr
 --    e' <- evalLiftedCRefS expr
     e' <- evalSKIRefSP expr
     putStrLn $ showExpr . simplifyExpr . unBuildExprBruijn . buildExprBruijn $ e'
-

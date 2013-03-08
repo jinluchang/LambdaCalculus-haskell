@@ -10,6 +10,11 @@ import Data.IORef
 import Text.Parsec
 import Text.Parsec.String
 
+-- import Debug.Trace
+-- import System.IO.Unsafe
+-- counter = unsafePerformIO $ newIORef 0
+-- addCounter = (\x -> unsafePerformIO (modifyIORef counter (+1) >> (readIORef counter >>= \n -> print n) >> return x))
+
 data Expr a
     = Var a
     | Ap (Expr a) (Expr a)
@@ -22,6 +27,11 @@ data ExprBruijn a
     | ApBruijn (ExprBruijn a) (ExprBruijn a)
     | LamBruijn (ExprBruijn a)
     deriving Show
+
+data ExprBFunc a
+    = VarBFunc a
+    | ApBFunc (ExprBFunc a) (ExprBFunc a)
+    | LamBFunc (ExprBFunc a -> ExprBFunc a)
 
 data ExprList a
     = VarList a
@@ -91,6 +101,26 @@ type LamExprRef = ExprRef Name
 type LamExprSKI = ExprSKI Name
 type LamExprSKIRef = ExprSKIRef Name
 type LamExprBruijn = ExprBruijn Name
+type LamExprBFunc = ExprBFunc Name
+
+-- -}
+-- ------------------------------------------------------------------------------------
+-- ------------------------------------------------------------------------------------
+-- ------------------------------------------------------------------------------------
+-- {-
+
+buildExprBFunc :: Eq a => Expr a -> ExprBFunc a
+buildExprBFunc = go [] . buildExprBruijn where
+    go env (LamBruijn e) = LamBFunc $ \x -> go (x:env) e
+    go env (BoundBruijn n) = env !! n
+    go env (ApBruijn e1 e2) = ApBFunc (go env e1) (go env e2)
+    go env (VarBruijn x) = VarBFunc x
+
+unBuildExprBFunc :: LamExprBFunc -> LamExpr
+unBuildExprBFunc = go variableNames where
+    go vns (LamBFunc f) = Lam (head vns) $ go (tail vns) $ f (VarBFunc (head vns))
+    go vns (ApBFunc e1 e2) = Ap (go vns e1) (go vns e2)
+    go _ (VarBFunc x) = Var x
 
 -- -}
 -- ------------------------------------------------------------------------------------
@@ -166,7 +196,9 @@ decodeBruijn = fst . go where
     go ('0':'1':e1e2str) = ((ApBruijn e1 e2), str) where
         (e1, e2str) = go e1e2str
         (e2, str) = go e2str
-    go _ = error "decodeBruijn"
+    go (' ':str) = go str
+    go ('\n':str) = go str
+    go rest = error $ "decodeBruijn: " ++ rest
     span' _ [] = ([],[])
     span' p (x:xs) | p x = let (ys,zs) = span' p xs in (x:ys,zs)
                    | otherwise = ([x], xs)

@@ -1,15 +1,15 @@
 all : interpreter encode decode
 
-interpreter :
+interpreter : *.hs
 	ghc -Wall -O2 -o interpreter --make Interpreter.hs
 
-encode :
+encode : *.hs
 	ghc -Wall -O2 -o encode --make Encode.hs
 
-decode :
+decode : *.hs
 	ghc -Wall -O2 -o decode --make Decode.hs
 
-prof :
+prof : *.hs
 	ghc -prof -auto-all -Wall -O2 -o interpreter --make Interpreter.hs
 
 clean :

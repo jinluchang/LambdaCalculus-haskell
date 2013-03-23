@@ -46,7 +46,7 @@ define (succ 7) \8 ->
 define (succ 8) \9 ->
 define (succ 9) \10 ->
 
-define (\n f x -> (n (\h g -> g (h f)) (\g -> x) id)) \prec ->
+define (\n f x -> n (\h g -> g (h f)) (\g -> x) id) \prec ->
 
 define (\n m -> n succ m) \add ->
 define (\n m -> m prec n) \minus ->
@@ -94,4 +94,4 @@ define (\size -> (fix (\search n ks ->
 	size nil nil)
 \searchNR ->
 
-(searchNQ 8)
+searchNQ 8

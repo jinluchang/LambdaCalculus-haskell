@@ -168,15 +168,13 @@ hasVarBruijn (LamBruijn b) x = b `hasVarBruijn` x
 hasVarBruijn (ApBruijn e1 e2) x = e1 `hasVarBruijn` x || e2 `hasVarBruijn` x
 
 encodeBruijn :: Eq a => ExprBruijn a -> String
-encodeBruijn (VarBruijn _) = error "encodeBruijn"
+encodeBruijn (VarBruijn _) = error "encodeBruijn: Free Variables are not allowed."
 encodeBruijn (BoundBruijn i) = replicate (i+1) '1' ++ "0"
 encodeBruijn (LamBruijn e) = "00" ++ encodeBruijn e
 encodeBruijn (ApBruijn e1 e2) = "01" ++ encodeBruijn e1 ++ encodeBruijn e2
 
 encodeBoolList :: String -> String
 encodeBoolList str = "(" ++ "(\\f b -> b f) (\\f b -> b f) \\define ->\n" ++
-    "define (\\x -> x) \\id ->" ++
-    "define (\\f -> (\\x -> f (x x)) (\\x -> f (x x))) \\fix ->" ++
     "define (\\x y -> x) \\true ->\n" ++
     "define (\\x y -> y) \\false ->\n" ++
     "define (\\r z -> z true r) \\0 ->\n" ++

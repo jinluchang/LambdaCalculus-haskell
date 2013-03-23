@@ -12,5 +12,8 @@ main = do
         then putStrLn $ showExpr . unBuildExprBruijn . decodeBruijn $ exprStr
         else do
             let expr = readExpr exprStr
-            e' <- evalSKIRefSP expr
+--            let e' = evalBFunc expr
+--            e' <- evalSKIRefSP expr
+--            e' <- evalLiftedRefS expr
+            e' <- evalLiftedCRefS expr
             putStrLn $ showExpr . unBuildExprBruijn . decodeBruijn . unBuildBinaryList $ e'

@@ -333,7 +333,6 @@ hasVarSKI BSKI _ = False
 -- ------------------------------------------------------------------------------------
 -- {-
 
-
 buildExprRef :: LamExpr -> IO (IORef LamExprRef)
 buildExprRef (Var x) = newIORef $ VarRef x
 buildExprRef (Lam x expr) = do
@@ -564,13 +563,23 @@ readExpr str = case parse pLamExpr (take 10 str) str of
     Right expr -> expr
 
 pLamExpr :: Parser LamExpr
-pLamExpr = chainl1 (try $ spaces >> (pParentheseExpr <|> pVar <|> pLam)) (return Ap)
+pLamExpr = chainl1 (try $ pSpaces >> (pParentheseExpr <|> pVar <|> pLam)) (return Ap)
+
+pSpaces :: Parser ()
+pSpaces = spaces >> (try pComment <|> return ())
+
+pComment :: Parser ()
+pComment = do
+    _ <- char ';'
+    _ <- many $ noneOf "\n"
+    _ <- char '\n'
+    pSpaces
 
 pParentheseExpr :: Parser LamExpr
 pParentheseExpr = do
     _ <- char '('
     expr <- pLamExpr
-    spaces
+    pSpaces
     _ <- char ')'
     return expr
 
@@ -581,17 +590,19 @@ pVar = do
 
 pName :: Parser Name
 pName = do
-    cs <- many1 (oneOf "+*!@%^&_=" <|> alphaNum)
-    return cs
+    cs <- many1 (oneOf "+-*/<>=!@%&_?" <|> alphaNum)
+    if cs == "->"
+        then fail ""
+        else return cs
 
 pLam :: Parser LamExpr
 pLam = do
     _ <- char '\\'
-    spaces
-    xs <- many1 (try $ spaces >> pName)
-    spaces
-    _ <- string "->"
-    spaces
+    pSpaces
+    xs <- many1 (try $ pSpaces >> pName)
+    pSpaces
+    _ <- try $ string "->"
+    pSpaces
     expr <- pLamExpr
     return $ genLamList xs expr
 

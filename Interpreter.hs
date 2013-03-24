@@ -10,7 +10,7 @@ main = do
     args <- getArgs
     exprStr <- getContents
     let expr = readExpr exprStr
-    putStrLn exprStr
+    putStrLn $ showExpr expr
     if "-v" `elem` args then putStrLn $ showLiftedExpr . buildLiftedExpr . buildExprList $ expr else return ()
     if "-v" `elem` args then putStrLn $ showExprSKI . buildExprSKI $ expr else return ()
 --    e' <- evalRefS expr

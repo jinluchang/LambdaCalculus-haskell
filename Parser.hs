@@ -570,7 +570,7 @@ pSpaces = spaces >> (try pComment <|> return ())
 
 pComment :: Parser ()
 pComment = do
-    _ <- char ';'
+    _ <- string ";" <|> try (string "--")
     _ <- many $ noneOf "\n"
     _ <- char '\n'
     pSpaces
@@ -591,7 +591,7 @@ pVar = do
 pName :: Parser Name
 pName = do
     cs <- many1 (oneOf "+-*/<>=!@%&_?" <|> alphaNum)
-    if cs == "->"
+    if cs `elem` ["->", "--"]
         then fail ""
         else return cs
 

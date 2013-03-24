@@ -290,23 +290,23 @@ simplifySKI x = fromMaybe x $ simplifySKIMaybe x
 
 simplifySKIMaybe :: Eq a => ExprSKI a -> Maybe (ExprSKI a)
 simplifySKIMaybe (ApSKI BSKI ISKI) = Just ISKI
-simplifySKIMaybe (ApSKI (ApSKI BSKI x) ISKI) = Just . fromMaybe x $ simplifySKIMaybe x
+simplifySKIMaybe (ApSKI (ApSKI BSKI x) ISKI) = Just $ simplifySKI x
 simplifySKIMaybe (ApSKI (ApSKI CSKI BSKI) ISKI) = Just ISKI
-simplifySKIMaybe (ApSKI (ApSKI m l) (ApSKI n l')) | l == l' = Just . fromMaybe e $ simplifySKIMaybe e where
+simplifySKIMaybe (ApSKI (ApSKI m l) (ApSKI n l')) | l == l' = Just $ simplifySKI e where
     e = ApSKI (ApSKI (ApSKI SSKI m) n) l
 
-simplifySKIMaybe (ApSKI ISKI x) = Just . fromMaybe x $ simplifySKIMaybe x
-simplifySKIMaybe (ApSKI (ApSKI KSKI x) _) = Just . fromMaybe x $ simplifySKIMaybe x
-simplifySKIMaybe (ApSKI (ApSKI (ApSKI CSKI x) y) z) = Just . fromMaybe e $ simplifySKIMaybe e where
+simplifySKIMaybe (ApSKI ISKI x) = Just $ simplifySKI x
+simplifySKIMaybe (ApSKI (ApSKI KSKI x) _) = Just $ simplifySKI x
+simplifySKIMaybe (ApSKI (ApSKI (ApSKI CSKI x) y) z) = Just $ simplifySKI e where
     e = ApSKI (ApSKI x z) y
-simplifySKIMaybe (ApSKI (ApSKI (ApSKI BSKI x) y) z) = Just . fromMaybe e $ simplifySKIMaybe e where
+simplifySKIMaybe (ApSKI (ApSKI (ApSKI BSKI x) y) z) = Just $ simplifySKI e where
     e = ApSKI x (ApSKI y z)
 
 simplifySKIMaybe (ApSKI e1 e2) = case simplifySKIMaybe e1 of
     Nothing -> case simplifySKIMaybe e2 of
         Nothing -> Nothing
-        Just e2' -> Just . fromMaybe (ApSKI e1 e2') $ simplifySKIMaybe (ApSKI e1 e2')
-    Just e1' -> Just . fromMaybe (ApSKI e1' e2) $ simplifySKIMaybe (ApSKI e1' e2)
+        Just e2' -> Just . simplifySKI $ ApSKI e1 e2'
+    Just e1' -> Just . simplifySKI $ ApSKI e1' e2
 simplifySKIMaybe _ = Nothing
 
 unBuildExprSKI :: LamExprSKI -> LamExpr

@@ -1,0 +1,4 @@
+The interpreter read standard input, for example:
+
+time cat input/queens | ./interpreter
+time cat input/queens | ./encode | cat input/interpreter - | ./interpreter

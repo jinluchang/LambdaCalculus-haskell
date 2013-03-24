@@ -72,12 +72,6 @@ define ((fix (\isOk n ks k -> (isNil ks)
          (isOk (succ n) (cdr ks) k)))))) 1)
 \isValidNQ ->
 
-define ((fix (\isOk n ks k -> (isNil ks)
-    true
-    (and (notEqual k (car ks))
-         (isOk (succ n) (cdr ks) k)))) 1)
-\isValidNR ->
-
 define (\size -> (fix (\search n ks ->
     (isZero n)
         (cons ks)
@@ -85,13 +79,5 @@ define (\size -> (fix (\search n ks ->
             (map (\k -> cons k ks) (filter (isValidNQ ks) (genList size)))))))
 	size nil nil)
 \searchNQ ->
-
-define (\size -> (fix (\search n ks ->
-    (isZero n)
-        (cons ks)
-        (foldr (\f g x -> f (g x)) id (map (search (prec n))
-            (map (\k -> cons k ks) (filter (isValidNR ks) (genList size)))))))
-	size nil nil)
-\searchNR ->
 
 searchNQ 8

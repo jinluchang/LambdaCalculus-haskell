@@ -9,8 +9,11 @@ main :: IO ()
 main = do
     args <- getArgs
     exprStr <- getContents
-    let expr = readExpr exprStr
+    let exprRead = readExpr exprStr
+        expr = simplifyExprInline exprRead
+    putStrLn $ showExpr exprRead
     putStrLn $ showExpr expr
+    putStrLn "Evaluation Start"
     if "-v" `elem` args then putStrLn $ showLiftedExpr . buildLiftedExpr . buildExprList $ expr else return ()
     if "-v" `elem` args then putStrLn $ showExprSKI . buildExprSKI $ expr else return ()
 --    e' <- evalRefS expr

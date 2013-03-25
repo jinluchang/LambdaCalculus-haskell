@@ -411,13 +411,13 @@ eliminatingFreeVariables (VarList x) = VarList x
 eliminatingFreeVariables (ApList e1 e2) = ApList (eliminatingFreeVariables e1) (eliminatingFreeVariables e2)
 eliminatingFreeVariables (LamList xs e) = foldl ApList b $ map VarList xs' where
     b = LamList (xs' ++ xs) e'
-    xs' = freeVariables e' \\ xs
+    xs' = freeVariablesList e' \\ xs
     e' = eliminatingFreeVariables e
 
-freeVariables :: LamExprList -> [Name]
-freeVariables (VarList x) = [x]
-freeVariables (ApList e1 e2) = union (freeVariables e1) (freeVariables e2)
-freeVariables (LamList xs e) = freeVariables e \\ xs
+freeVariablesList :: LamExprList -> [Name]
+freeVariablesList (VarList x) = [x]
+freeVariablesList (ApList e1 e2) = union (freeVariablesList e1) (freeVariablesList e2)
+freeVariablesList (LamList xs e) = freeVariablesList e \\ xs
 
 -- -}
 -- ------------------------------------------------------------------------------------
@@ -494,6 +494,11 @@ firstUnusedName [] _ = error "firstUnusedName"
 firstUnusedName (n:ns) exprs
     | all (not . (`hasVar` n)) exprs = n
     | otherwise = firstUnusedName ns exprs
+
+freeVariables :: LamExpr -> [Name]
+freeVariables (Var x) = [x]
+freeVariables (Ap e1 e2) = union (freeVariables e1) (freeVariables e2)
+freeVariables (Lam x e) = freeVariables e \\ [x]
 
 hasVar :: LamExpr -> Name -> Bool
 hasVar (Var y) x = x == y

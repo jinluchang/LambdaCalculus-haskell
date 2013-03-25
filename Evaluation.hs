@@ -510,10 +510,76 @@ substitude :: Name -> LamExpr -> LamExpr -> LamExpr
 substitude x arg (Var y)
     | y == x = arg
     | otherwise = Var y
-substitude x arg (Ap expr1 exp2) = Ap (substitude x arg expr1) (substitude x arg exp2)
-substitude x arg (Lam y expr)
-    | y == x = Lam y expr
-    | arg `hasVar` y = Lam y' $ substitude x arg $ substitude y (Var y') expr
-    | otherwise = Lam y (substitude x arg expr)
+substitude x arg (Ap e1 e2) = Ap (substitude x arg e1) (substitude x arg e2)
+substitude x arg (Lam y e)
+    | y == x = Lam y e
+    | not $ e `hasVar` x = Lam y e
+    | arg `hasVar` y = Lam y' $ substitude x arg $ substitude y (Var y') e
+    | otherwise = Lam y $ substitude x arg e
   where
-    y' = firstUnusedName names [arg, expr]
+    y' = firstUnusedName names [arg, e]
+
+-- -}
+-- ------------------------------------------------------------------------------------
+-- ------------------------------------------------------------------------------------
+-- ------------------------------------------------------------------------------------
+-- {-
+
+occurFree :: Name -> LamExpr -> Bool
+occurFree x (Var y) = x /= y
+occurFree x (Lam y e) = x == y || x `occurFree` e
+occurFree x (Ap e1 e2) = x `occurFree` e1 && x `occurFree` e2
+
+occurOnce :: Name -> LamExpr -> Bool
+occurOnce x e = numberOfOccurrence x e <= 1
+
+numberOfOccurrence:: Name -> LamExpr -> Int
+numberOfOccurrence x (Var y)
+    | x == y = 1
+    | otherwise = 0
+numberOfOccurrence x (Lam y e)
+    | x == y = 0
+    | otherwise = numberOfOccurrence x e
+numberOfOccurrence x (Ap e1 e2) = numberOfOccurrence x e1 + numberOfOccurrence x e2
+
+simplifyExprInline :: LamExpr -> LamExpr
+simplifyExprInline x = fromMaybe x $ simplifyExprInlineMaybe x
+
+simplifyExprInlineMaybe :: LamExpr -> Maybe LamExpr
+simplifyExprInlineMaybe expr@(Ap (Lam x e) arg)
+    | x `occurOnce` e = Just . simplifyExprInline $ substitude x arg e
+    | evalStep arg == Nothing && freeVariables arg == [] = Just .simplifyExprInline $ substitude x arg e
+
+simplifyExprInlineMaybe (Lam x e) = case simplifyExprInlineMaybe e of
+    Nothing -> Nothing
+    Just e' -> Just $ Lam x e'
+
+simplifyExprInlineMaybe (Ap e1 e2) = case simplifyExprInlineMaybe e1 of
+    Nothing -> case simplifyArgInlineMaybe e2 of
+        Nothing -> Nothing
+        Just e2' -> Just . simplifyExprInline $ Ap e1 e2'
+    Just e1' -> Just . simplifyExprInline $ Ap e1' e2
+simplifyExprInlineMaybe _ = Nothing
+
+simplifyArgInline :: LamExpr -> LamExpr
+simplifyArgInline x = fromMaybe x $ simplifyArgInlineMaybe x
+
+simplifyArgInlineMaybe :: LamExpr -> Maybe LamExpr
+simplifyArgInlineMaybe expr@(Ap (Lam x e) arg)
+    | x `occurOnce` e = Just . simplifyArgInline $ substitude x arg e
+simplifyArgInlineMaybe expr@(Ap (Lam x e) arg@(Ap _ _))
+    | evalStep arg == Nothing && freeVariables arg == [] = Just . simplifyArgInline $ substitude x arg e
+simplifyArgInlineMaybe expr@(Ap (Lam x e) arg@(Var _)) = Just . simplifyArgInline $ substitude x arg e
+
+simplifyArgInlineMaybe (Lam x e) = case simplifyArgInlineMaybe e of
+    Nothing -> Nothing
+    Just e' -> Just $ Lam x e'
+
+simplifyArgInlineMaybe (Ap e1 e2) = case simplifyArgInlineMaybe e1 of
+    Nothing -> case simplifyArgInlineMaybe e2 of
+        Nothing -> Nothing
+        Just e2' -> Just . simplifyArgInline $ Ap e1 e2'
+    Just e1' -> Just . simplifyArgInline $ Ap e1' e2
+simplifyArgInlineMaybe _ = Nothing
+
+-- -}

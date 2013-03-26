@@ -1,6 +1,12 @@
 The interpreter read standard input, for example:
 
 time cat input/queens | ./interpreter
+
 time cat input/queens | ./encode | cat input/interpreter - | ./interpreter
 
-The input/interpreter code comes from http://homepages.cwi.nl/~tromp/cl/cl.html
+The input/interpreter code comes from
+http://homepages.cwi.nl/~tromp/cl/cl.html
+
+./encode and ./decode also read standard input, but only works for
+input without free variables. The encoding convention also follows the
+above link.

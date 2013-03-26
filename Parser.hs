@@ -4,6 +4,7 @@ import Control.Arrow
 import Control.Monad
 import Data.List
 import Data.Maybe
+import Data.Array
 
 import Data.IORef
 
@@ -53,7 +54,8 @@ data ExprFuncRef a
 
 type Env a = [(a, GlobleFunction a)]
 
-data GlobleFunctionCompiled a = GlobleFunctionCompiled Int ([IORef (ExprFuncCRef a)] -> IO (IORef (ExprFuncCRef a)))
+data GlobleFunctionCompiled a = GlobleFunctionCompiled Int
+    (Int -> [IORef (ExprFuncCRef a)] -> [IORef (ExprFuncCRef a)] -> IO (Int, [IORef (ExprFuncCRef a)], [IORef (ExprFuncCRef a)]))
 
 data ExprFuncCRef a
     = VarFuncCRef a
@@ -455,7 +457,8 @@ buildExprLiftedRef (ApFunc e1 e2) = do
 
 buildExprLiftedCRef :: LamEnv -> LamExprFunc -> IO (IORef LamExprFuncCRef)
 buildExprLiftedCRef env e = do
-    envC <- liftM (zip (map fst env)) . mapM newIORef $ replicate len (GlobleFunctionCompiled 0 (return . head))
+    envC <- liftM (zip (map fst env)) . mapM newIORef $
+        replicate len (GlobleFunctionCompiled 0 (error "Function has not been defined yet."))
     mapM_ (compileF envC) env
     compile envC e
   where
@@ -467,8 +470,15 @@ buildExprLiftedCRef env e = do
         er2 <- compile envC e2
         newIORef $ ApFuncCRef er1 er2
     compileF envC (f, GlobleFunction xs fe) = writeIORef (fromJust $ lookup f envC) $
-        GlobleFunctionCompiled (length xs) $ genFunc envC xs fe
-    genFunc _    xs (VarFunc x) = return . (!! n) where
+        GlobleFunctionCompiled (length xs) $ genFuncS envC xs fe
+    genFuncS envC xs fe = \narg ns as -> do
+        n' <- fc $ listArray (0,argc-1) as
+        writeIORef (ns !! (argc -1)) $ IndFuncCRef n'
+        return (narg-argc, n' : drop argc ns, drop argc as)
+      where
+        argc = length xs
+        fc = genFunc envC xs fe
+    genFunc _    xs (VarFunc x) = return . (! n) where
         n = length xs - 1 - (fromJust $ elemIndex x $ reverse xs)
     genFunc envC _  (FuncFunc f) = const fr where
         fr = newIORef $ FuncFuncCRef (fromJust $ lookup f envC)

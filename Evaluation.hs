@@ -408,38 +408,44 @@ mkInstanceRef xs body as = go body where
 evalLiftedCRefS :: LamExpr -> IO LamExpr
 evalLiftedCRefS e = do
     er <- buildExprLiftedCRef env ef
-    el' <- evalStackLiftedCRef variableNames [er] []
+    el' <- evalStackLiftedCRef variableNames 0 [er] []
     return $ unBuildExprList el'
   where
     (ef, env) = buildLiftedExpr $ buildExprList e
 
-evalStackLiftedCRef :: [Name] -> [IORef LamExprFuncCRef] -> [IORef LamExprFuncCRef] -> IO LamExprList
-evalStackLiftedCRef vns (n:ns) as = readIORef n >>= \ne -> case ne of
+evalStackLiftedCRef :: [Name] -> Int -> [IORef LamExprFuncCRef] -> [IORef LamExprFuncCRef] -> IO LamExprList
+evalStackLiftedCRef vns narg (n:ns) as = seq narg $ readIORef n >>= \ne -> case ne of
     IndFuncCRef n' -> case (ns,as) of
-        ([], []) -> evalStackLiftedCRef vns [n'] []
+        ([], []) -> evalStackLiftedCRef vns narg [n'] []
         (n1:n1s, a1:a1s) -> do
             writeIORef n1 $ ApFuncCRef n' a1
-            evalStackLiftedCRef vns (n':ns) as
+            evalStackLiftedCRef vns narg (n':ns) as
         _ -> error "evalStackLiftedCRef"
     VarFuncCRef x -> do
-        as' <- mapM (\a -> evalStackLiftedCRef vns [a] []) as
+        as' <- mapM (\a -> evalStackLiftedCRef vns 0 [a] []) as
         return $ foldl (\n' a -> ApList n' a) (VarList x) as'
-    ApFuncCRef n0 a -> evalStackLiftedCRef vns (n0:n:ns) (a:as)
+    ApFuncCRef n0 a -> evalStackLiftedCRef vns (narg+1) (n0:n:ns) (a:as)
     FuncFuncCRef fr -> readIORef fr >>= \(GlobleFunctionCompiled argc func) -> do
-        let as' = drop (argc - 1) as
-            ns' = drop (argc - 1) ns
-        if not (null $ as')
+        if narg >= argc
             then do
-                n' <- func as
-                writeIORef (head ns') $ IndFuncCRef n'
-                evalStackLiftedCRef vns (n' : drop argc ns) (tail as')
+                (narg', ns', as') <- func narg ns as
+                -- writeIORef (head ns') $ IndFuncCRef n'
+                -- evalStackLiftedCRef vns (n' : tail ns') (tail as')
+                evalStackLiftedCRef vns narg' ns' as'
             else do
-                let diff = argc - length as
+                let diff = argc - narg
                 asPad <- mapM (newIORef . VarFuncCRef) (take diff vns)
-                n' <- func $ as ++ asPad
-                e <- evalStackLiftedCRef (drop diff vns) [n'] []
+                let nsPadGen _ [] = return []
+                    nsPadGen nlast (argp:argps) = do
+                        np <- newIORef $ ApFuncCRef nlast argp
+                        nps <- nsPadGen np argps
+                        return $ np : nps
+                nsPad <- nsPadGen (last (n:ns)) asPad
+                let as' = as ++ asPad
+                    ns' = ns ++ nsPad
+                e <- evalStackLiftedCRef (drop diff vns) argc (n:ns') as'
                 return $ LamList (take diff vns) e
-evalStackLiftedCRef _ _ _ = error "evalStackLiftedCRef"
+evalStackLiftedCRef _ _ _ _ = error "evalStackLiftedCRef"
 
 -- -}
 -- ------------------------------------------------------------------------------------

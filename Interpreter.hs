@@ -19,8 +19,8 @@ main = do
 --    e' <- evalRefS expr
 --    let e' = evalSKI expr
 --    let e' = evalLifted expr
---    let e' = evalBFunc expr
 --    e' <- evalLiftedRefS expr
 --    e' <- evalLiftedCRefS expr
-    e' <- evalSKIRefSP expr
+--    e' <- evalSKIRefSP expr
+    let e' = evalBFunc expr
     putStrLn $ showExpr . simplifyExpr . unBuildExprBruijn . buildExprBruijn $ e'

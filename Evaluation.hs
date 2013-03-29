@@ -47,16 +47,16 @@ evalStackSKIPadRef vns (n:ns) as = readIORef n >>= \ne -> case ne of
         _ -> error "evalStackSKIPadRef"
     KSKIRef -> case (ns,as) of
         ([], []) -> return . readExpr $ "\\X _ -> X"
-        ([n1], [a1]) -> do
+        ([_], [a1]) -> do
             a1' <- evalStackSKIPadRef (tail vns) [a1] []
             return $ Lam "_" a1'
-        (n1:n2:n2s, a1:a2:a2s) -> do
+        (_:n2:n2s, a1:_:a2s) -> do
             writeIORef n2 $ IndSKIRef a1
             evalStackSKIPadRef vns (a1:n2s) a2s
         _ -> error "evalStackSKIPadRef"
     SSKIRef -> case (ns,as) of
         ([], []) -> return . readExpr $ "\\X Y Z -> (X Z) (Y Z)"
-        ([n1], [a1]) -> do
+        ([_], [a1]) -> do
             a2 <- newIORef $ VarSKIRef $ vns !! 0
             a3 <- newIORef $ VarSKIRef $ vns !! 1
             n2' <- newIORef $ ApSKIRef a1 a3
@@ -64,14 +64,14 @@ evalStackSKIPadRef vns (n:ns) as = readIORef n >>= \ne -> case ne of
             n3' <- newIORef $ ApSKIRef n2' a3'
             e' <- evalStackSKIPadRef (drop 2 vns) [a1,n2',n3'] [a3,a3']
             return . Lam (vns !! 0) . Lam (vns !! 1) $ e'
-        ([n1,n2], [a1,a2]) -> do
+        ([_,_], [a1,a2]) -> do
             a3 <- newIORef $ VarSKIRef $ head vns
             n2' <- newIORef $ ApSKIRef a1 a3
             a3' <- newIORef $ ApSKIRef a2 a3
             n3' <- newIORef $ ApSKIRef n2' a3'
             e' <- evalStackSKIPadRef (tail vns) [a1,n2',n3'] [a3,a3']
             return . Lam (head vns) $ e'
-        (n1:n2:n3:n3s, a1:a2:a3:a3s) -> do
+        (_:_:n3:n3s, a1:a2:a3:a3s) -> do
             n2' <- newIORef $ ApSKIRef a1 a3
             a3' <- newIORef $ ApSKIRef a2 a3
             writeIORef n3 $ ApSKIRef n2' a3'
@@ -79,40 +79,40 @@ evalStackSKIPadRef vns (n:ns) as = readIORef n >>= \ne -> case ne of
         _ -> error "evalStackSKIPadRef"
     CSKIRef -> case (ns,as) of
         ([], []) -> return . readExpr $ "\\X Y Z -> (X Z) Y"
-        ([n1], [a1]) -> do
+        ([_], [a1]) -> do
             a2 <- newIORef $ VarSKIRef $ vns !! 0
             a3 <- newIORef $ VarSKIRef $ vns !! 1
             n2' <- newIORef $ ApSKIRef a1 a3
             n3' <- newIORef $ ApSKIRef n2' a2
             e' <- evalStackSKIPadRef (drop 2 vns) [a1,n2',n3'] [a3,a2]
             return . Lam (vns !! 0) . Lam (vns !! 1) $ e'
-        ([n1,n2], [a1,a2]) -> do
+        ([_,_], [a1,a2]) -> do
             a3 <- newIORef $ VarSKIRef $ head vns
             n2' <- newIORef $ ApSKIRef a1 a3
             n3' <- newIORef $ ApSKIRef n2' a2
             e' <- evalStackSKIPadRef (tail vns) [a1,n2',n3'] [a3,a2]
             return . Lam (head vns) $ e'
-        (n1:n2:n3:n3s, a1:a2:a3:a3s) -> do
+        (_:_:n3:n3s, a1:a2:a3:a3s) -> do
             n2' <- newIORef $ ApSKIRef a1 a3
             writeIORef n3 $ ApSKIRef n2' a2
             evalStackSKIPadRef vns (a1:n2':n3:n3s) (a3:a2:a3s)
         _ -> error "evalStackSKIPadRef"
     BSKIRef -> case (ns,as) of
         ([], []) -> return . readExpr $ "\\X Y Z -> X (Y Z)"
-        ([n1], [a1]) -> do
+        ([_], [a1]) -> do
             a2 <- newIORef $ VarSKIRef $ vns !! 0
             a3 <- newIORef $ VarSKIRef $ vns !! 1
             a3' <- newIORef $ ApSKIRef a2 a3
             n3' <- newIORef $ ApSKIRef a1 a3'
             e' <- evalStackSKIPadRef (drop 2 vns) [a1,n3'] [a3']
             return . Lam (vns !! 0) . Lam (vns !! 1) $ e'
-        ([n1,n2], [a1,a2]) -> do
+        ([_,_], [a1,a2]) -> do
             a3 <- newIORef $ VarSKIRef $ head vns
             a3' <- newIORef $ ApSKIRef a2 a3
             n3' <- newIORef $ ApSKIRef a1 a3'
             e' <- evalStackSKIPadRef (tail vns) [a1,n3'] [a3']
             return . Lam (head vns) $ e'
-        (n1:n2:n3:n3s, a1:a2:a3:a3s) -> do
+        (_:_:n3:n3s, a1:a2:a3:a3s) -> do
             a3' <- newIORef $ ApSKIRef a2 a3
             writeIORef n3 $ ApSKIRef a1 a3'
             evalStackSKIPadRef vns (a1:n3:n3s) (a3':a3s)
@@ -134,7 +134,7 @@ evalSKIRefS e = do
 
 evalStackSKIRef :: [IORef LamExprSKIRef] -> [IORef LamExprSKIRef] -> IO (IORef LamExprSKIRef)
 evalStackSKIRef (n:ns) as = readIORef n >>= \ne -> case ne of
-    VarSKIRef x -> do
+    VarSKIRef _ -> do
         as' <- mapM (\a -> evalStackSKIRef [a] []) as
         n' <- foldM (\n' a -> newIORef $ ApSKIRef n' a) n as'
         return n'
@@ -157,7 +157,7 @@ evalStackSKIRef (n:ns) as = readIORef n >>= \ne -> case ne of
             a1' <- evalStackSKIRef [a1] []
             writeIORef n1 $ ApSKIRef n a1'
             return n1
-        (n1:n2:n2s, a1:a2:a2s) -> do
+        (_:n2:n2s, a1:_:a2s) -> do
             writeIORef n2 $ IndSKIRef a1
             evalStackSKIRef (a1:n2s) a2s
         _ -> error "evalStackSKIRef"
@@ -173,7 +173,7 @@ evalStackSKIRef (n:ns) as = readIORef n >>= \ne -> case ne of
             writeIORef n1 $ ApSKIRef n a1'
             writeIORef n2 $ ApSKIRef n1 a2'
             return n2
-        (n1:n2:n3:n3s, a1:a2:a3:a3s) -> do
+        (_:_:n3:n3s, a1:a2:a3:a3s) -> do
             n2' <- newIORef $ ApSKIRef a1 a3
             a3' <- newIORef $ ApSKIRef a2 a3
             writeIORef n3 $ ApSKIRef n2' a3'
@@ -191,7 +191,7 @@ evalStackSKIRef (n:ns) as = readIORef n >>= \ne -> case ne of
             writeIORef n1 $ ApSKIRef n a1'
             writeIORef n2 $ ApSKIRef n1 a2'
             return n2
-        (n1:n2:n3:n3s, a1:a2:a3:a3s) -> do
+        (_:_:n3:n3s, a1:a2:a3:a3s) -> do
             n2' <- newIORef $ ApSKIRef a1 a3
             writeIORef n3 $ ApSKIRef n2' a2
             evalStackSKIRef (a1:n2':n3:n3s) (a3:a2:a3s)
@@ -208,7 +208,7 @@ evalStackSKIRef (n:ns) as = readIORef n >>= \ne -> case ne of
             writeIORef n1 $ ApSKIRef n a1'
             writeIORef n2 $ ApSKIRef n1 a2'
             return n2
-        (n1:n2:n3:n3s, a1:a2:a3:a3s) -> do
+        (_:_:n3:n3s, a1:a2:a3:a3s) -> do
             a3' <- newIORef $ ApSKIRef a2 a3
             writeIORef n3 $ ApSKIRef a1 a3'
             evalStackSKIRef (a1:n3:n3s) (a3':a3s)
@@ -267,7 +267,7 @@ evalRefS expr = do
 
 evalStackRef :: [IORef LamExprRef] -> [IORef LamExprRef] -> IO (IORef LamExprRef)
 evalStackRef (n:ns) as = readIORef n >>= \ne -> case ne of
-    VarRef x -> do
+    VarRef _ -> do
         as' <- mapM (\a -> evalStackRef [a] []) as
         foldM (\n' (n'',a) -> writeIORef n'' (ApRef n' a) >> return n'') n $ zip ns as'
     ApRef n0 a -> evalStackRef (n0:n:ns) (a:as)
@@ -359,7 +359,7 @@ evalStackLiftedRef :: [Name] -> LamEnv -> [IORef LamExprFuncRef] -> [IORef LamEx
 evalStackLiftedRef vns env (n:ns) as = readIORef n >>= \ne -> case ne of
     IndFuncRef n' -> case (ns,as) of
         ([], []) -> evalStackLiftedRef vns env [n'] []
-        (n1:n1s, a1:a1s) -> do
+        (n1:_, a1:_) -> do
             writeIORef n1 $ ApFuncRef n' a1
             evalStackLiftedRef vns env (n':ns) as
         _ -> error "evalStackLiftedRef"
@@ -412,7 +412,7 @@ evalStackLiftedCRef :: [Name] -> Int -> [IORef LamExprFuncCRef] -> [IORef LamExp
 evalStackLiftedCRef vns narg (n:ns) as = seq narg $ readIORef n >>= \ne -> case ne of
     IndFuncCRef n' -> case (ns,as) of
         ([], []) -> evalStackLiftedCRef vns narg [n'] []
-        (n1:n1s, a1:a1s) -> do
+        (n1:_, a1:_) -> do
             writeIORef n1 $ ApFuncCRef n' a1
             evalStackLiftedCRef vns narg (n':ns) as
         _ -> error "evalStackLiftedCRef"
@@ -547,7 +547,7 @@ simplifyExprInline :: LamExpr -> LamExpr
 simplifyExprInline x = fromMaybe x $ simplifyExprInlineMaybe x
 
 simplifyExprInlineMaybe :: LamExpr -> Maybe LamExpr
-simplifyExprInlineMaybe expr@(Ap (Lam x e) arg)
+simplifyExprInlineMaybe (Ap (Lam x e) arg)
     | x `occurOnce` e = Just . simplifyExprInline $ substitude x arg e
     | evalStep arg == Nothing && freeVariables arg == [] = Just .simplifyExprInline $ substitude x arg e
 
@@ -566,11 +566,11 @@ simplifyArgInline :: LamExpr -> LamExpr
 simplifyArgInline x = fromMaybe x $ simplifyArgInlineMaybe x
 
 simplifyArgInlineMaybe :: LamExpr -> Maybe LamExpr
-simplifyArgInlineMaybe expr@(Ap (Lam x e) arg)
+simplifyArgInlineMaybe (Ap (Lam x e) arg)
     | x `occurOnce` e = Just . simplifyArgInline $ substitude x arg e
-simplifyArgInlineMaybe expr@(Ap (Lam x e) arg@(Ap _ _))
+simplifyArgInlineMaybe (Ap (Lam x e) arg@(Ap _ _))
     | evalStep arg == Nothing && freeVariables arg == [] = Just . simplifyArgInline $ substitude x arg e
-simplifyArgInlineMaybe expr@(Ap (Lam x e) arg@(Var _)) = Just . simplifyArgInline $ substitude x arg e
+simplifyArgInlineMaybe (Ap (Lam x e) arg@(Var _)) = Just . simplifyArgInline $ substitude x arg e
 
 simplifyArgInlineMaybe (Lam x e) = case simplifyArgInlineMaybe e of
     Nothing -> Nothing

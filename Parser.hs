@@ -118,7 +118,7 @@ buildExprBFunc = go [] . buildExprBruijn where
     go env (ApBruijn e1 e2) = apply (go env e1) (go env e2) where
         apply (LamBFunc f) arg = f arg
         apply x y = ApBFunc x y
-    go env (VarBruijn x) = VarBFunc x
+    go _ (VarBruijn x) = VarBFunc x
 
 unBuildExprBFunc :: LamExprBFunc -> LamExpr
 unBuildExprBFunc = go variableNames where
@@ -140,7 +140,7 @@ buildExprBruijn (Lam x e) = LamBruijn $ go 0 $ buildExprBruijn e where
     go n (ApBruijn e1 e2) = ApBruijn (go n e1) (go n e2)
     go n (VarBruijn y) | y == x = BoundBruijn n
                        | otherwise = VarBruijn y
-    go n (BoundBruijn i) = BoundBruijn i
+    go _ (BoundBruijn i) = BoundBruijn i
 
 unBuildExprBruijn :: LamExprBruijn -> LamExpr
 unBuildExprBruijn (VarBruijn x) = Var x
@@ -155,7 +155,7 @@ substituteBruijn :: ExprBruijn a -> ExprBruijn a -> ExprBruijn a
 substituteBruijn arg body = go 0 body where
     go n (LamBruijn b) = LamBruijn (go (n+1) b)
     go n (ApBruijn e1 e2) = ApBruijn (go n e1) (go n e2)
-    go n (VarBruijn x) = VarBruijn x
+    go _ (VarBruijn x) = VarBruijn x
     go n (BoundBruijn i) | i == n = arg
                          | otherwise = BoundBruijn i
 
@@ -252,9 +252,9 @@ buildExprSKI (Ap e1 e2) = simplifySKI $ ApSKI (buildExprSKI e1) (buildExprSKI e2
 buildExprSKI (Lam x e) = simplifySKI $ buildExprSKILam x $ buildExprSKI e
 
 buildExprSKILam :: (Eq a) => a -> ExprSKI a -> ExprSKI a
-buildExprSKILam x (ApSKI (ApSKI SSKI KSKI) _) = ApSKI SSKI KSKI
+buildExprSKILam _ (ApSKI (ApSKI SSKI KSKI) _) = ApSKI SSKI KSKI
 buildExprSKILam x m | not (m `hasVarSKI` x) = ApSKI KSKI m
-buildExprSKILam x (VarSKI _) = ISKI
+buildExprSKILam _ (VarSKI _) = ISKI
 buildExprSKILam x (ApSKI m (VarSKI y)) | x == y && not (m `hasVarSKI` x) = m
 buildExprSKILam x (ApSKI (ApSKI (VarSKI y) m) (VarSKI z))
     | y == x && z == x = buildExprSKILam x $ ApSKI (ApSKI (ApSKI (ApSKI SSKI SSKI) KSKI) (VarSKI x)) m
@@ -532,8 +532,8 @@ buildBinaryList ('1':str) = Lam "z" $ Ap (Ap (Var "z") (readExpr "\\x y -> y")) 
 buildBinaryList _ = error "buildBinaryList"
 
 unBuildBinaryList :: LamExpr -> String
-unBuildBinaryList (Lam x (Lam y (Var xy))) | xy == y = []
-unBuildBinaryList (Lam z (Ap (Ap (Var z') b) bs)) = check b : unBuildBinaryList bs where
+unBuildBinaryList (Lam _ (Lam y (Var xy))) | xy == y = []
+unBuildBinaryList (Lam _ (Ap (Ap (Var _) b) bs)) = check b : unBuildBinaryList bs where
     check (Lam x (Lam y (Var xy))) | xy == x = '0'
                                    | xy == y = '1'
     check _ = error "unBuildBinaryList"

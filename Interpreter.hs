@@ -11,11 +11,18 @@ main = do
     exprStr <- getContents
     let exprRead = readExpr exprStr
         expr = simplifyExprInline exprRead
-    putStrLn $ showExpr exprRead
-    putStrLn $ showExpr expr
-    putStrLn "Evaluation Start"
-    if "-v" `elem` args then putStrLn $ showLiftedExpr . buildLiftedExpr . buildExprList $ expr else return ()
-    if "-v" `elem` args then putStrLn $ showExprSKI . buildExprSKI $ expr else return ()
+    if "-v" `elem` args
+        then do
+            putStrLn "Original Expression"
+            putStrLn $ showExpr exprRead
+            putStrLn "Inlined Expression"
+            putStrLn $ showExpr expr
+            putStrLn "Evaluation Start"
+        else return ()
+
+--    if "-v" `elem` args then putStrLn $ showLiftedExpr . buildLiftedExpr . buildExprList $ expr else return ()
+--    if "-v" `elem` args then putStrLn $ showExprSKI . buildExprSKI $ expr else return ()
+
 --    e' <- evalRefS expr
 --    let e' = evalSKI expr
 --    let e' = evalLifted expr

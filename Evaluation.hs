@@ -14,12 +14,7 @@ import Data.IORef
 -- {-
 
 evalBFunc :: LamExpr -> LamExpr
-evalBFunc = unBuildExprBFunc . nf . buildExprBFunc where
-    nf (LamBFunc f) = LamBFunc (nf . f)
-    nf (ApBFunc fun arg) = case nf fun of
-        LamBFunc f -> f $ nf arg
-        fun' -> ApBFunc fun' $ nf arg
-    nf (VarBFunc x) = VarBFunc x
+evalBFunc = unBuildExprBFunc . buildExprBFunc where
 
 -- -}
 -- ------------------------------------------------------------------------------------

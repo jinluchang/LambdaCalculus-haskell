@@ -115,7 +115,6 @@ buildExprBFunc :: Eq a => Expr a -> ExprBFunc a
 buildExprBFunc = go [] . buildExprBruijn where
     go env (LamBruijn e) = LamBFunc $ \x -> go (x:env) e
     go env (BoundBruijn n) = env !! n
---    go env (ApBruijn e1 e2) = ApBFunc (go env e1) (go env e2)
     go env (ApBruijn e1 e2) = apply (go env e1) (go env e2) where
         apply (LamBFunc f) arg = f arg
         apply x y = ApBFunc x y

@@ -407,8 +407,8 @@ buildEnvGen fns env (VarList x) = (fns, (VarFunc x, env))
 buildEnvGen fns env (ApList e1 e2) = (fns'', (ApFunc e1' e2', env'')) where
     (fns', (e1', env')) = buildEnvGen fns env e1
     (fns'', (e2', env'')) = buildEnvGen fns' env' e2
-buildEnvGen fns env (LamList xs e) = (tail fns', (FuncFunc (head fns'), (head fns', GlobleFunction xs e'):env')) where
-    (fns', (e', env')) = buildEnvGen fns env e
+buildEnvGen fns env (LamList xs e) = (fns', (FuncFunc (head fns), (head fns, GlobleFunction xs e'):env')) where
+    (fns', (e', env')) = buildEnvGen (tail fns) env e
 
 eliminatingFreeVariables :: LamExprList -> LamExprList
 eliminatingFreeVariables (VarList x) = VarList x

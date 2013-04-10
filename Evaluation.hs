@@ -13,8 +13,8 @@ import Data.IORef
 -- ------------------------------------------------------------------------------------
 -- {-
 
-evalBFunc :: LamExpr -> LamExpr
-evalBFunc = unBuildExprBFunc . buildExprBFunc where
+evalC :: LamExpr -> LamExpr
+evalC = unBuildExprC . buildExprC where
 
 -- -}
 -- ------------------------------------------------------------------------------------

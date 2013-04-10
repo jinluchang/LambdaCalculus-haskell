@@ -29,10 +29,10 @@ data ExprBruijn a
     | LamBruijn (ExprBruijn a)
     deriving Show
 
-data ExprBFunc a
-    = VarBFunc a
-    | ApBFunc (ExprBFunc a) (ExprBFunc a)
-    | LamBFunc (ExprBFunc a -> ExprBFunc a)
+data ExprC a
+    = VarC a
+    | ApC (ExprC a) (ExprC a)
+    | LamC (ExprC a -> ExprC a)
 
 data ExprList a
     = VarList a
@@ -103,7 +103,7 @@ type LamExprRef = ExprRef Name
 type LamExprSKI = ExprSKI Name
 type LamExprSKIRef = ExprSKIRef Name
 type LamExprBruijn = ExprBruijn Name
-type LamExprBFunc = ExprBFunc Name
+type LamExprC = ExprC Name
 
 -- -}
 -- ------------------------------------------------------------------------------------
@@ -111,20 +111,20 @@ type LamExprBFunc = ExprBFunc Name
 -- ------------------------------------------------------------------------------------
 -- {-
 
-buildExprBFunc :: Eq a => Expr a -> ExprBFunc a
-buildExprBFunc = go [] . buildExprBruijn where
-    go env (LamBruijn e) = LamBFunc $ \x -> go (x:env) e
+buildExprC :: Eq a => Expr a -> ExprC a
+buildExprC = go [] . buildExprBruijn where
+    go env (LamBruijn e) = LamC $ \x -> go (x:env) e
     go env (BoundBruijn n) = env !! n
     go env (ApBruijn e1 e2) = apply (go env e1) (go env e2) where
-        apply (LamBFunc f) arg = f arg
-        apply x y = ApBFunc x y
-    go _ (VarBruijn x) = VarBFunc x
+        apply (LamC f) arg = f arg
+        apply x y = ApC x y
+    go _ (VarBruijn x) = VarC x
 
-unBuildExprBFunc :: LamExprBFunc -> LamExpr
-unBuildExprBFunc = go variableNames where
-    go vns (LamBFunc f) = Lam (head vns) $ go (tail vns) $ f (VarBFunc (head vns))
-    go vns (ApBFunc e1 e2) = Ap (go vns e1) (go vns e2)
-    go _ (VarBFunc x) = Var x
+unBuildExprC :: LamExprC -> LamExpr
+unBuildExprC = go variableNames where
+    go vns (LamC f) = Lam (head vns) $ go (tail vns) $ f (VarC (head vns))
+    go vns (ApC e1 e2) = Ap (go vns e1) (go vns e2)
+    go _ (VarC x) = Var x
 
 -- -}
 -- ------------------------------------------------------------------------------------

@@ -115,10 +115,13 @@ buildExprC :: Eq a => Expr a -> ExprC a
 buildExprC = go [] . buildExprBruijn where
     go env (LamBruijn e) = LamC $ \x -> go (x:env) e
     go env (BoundBruijn n) = env !! n
-    go env (ApBruijn e1 e2) = apply (go env e1) (go env e2) where
-        apply (LamC f) arg = f arg
-        apply x y = ApC x y
+    go env (ApBruijn e1 e2) = applyC (go env e1) (go env e2) where
     go _ (VarBruijn x) = VarC x
+
+applyC :: ExprC a -> ExprC a -> ExprC a
+applyC fun arg = case fun of
+    LamC f -> f arg
+    _ -> ApC fun arg
 
 unBuildExprC :: LamExprC -> LamExpr
 unBuildExprC = go variableNames where
@@ -499,7 +502,7 @@ buildExprLiftedCRef env e = do
 -- {-
 
 names :: [Name]
-names = (map (\c -> [c]) "ABCDEFGHIJKLMNOPQRSTUVWXYZ" ++) . map ("VAR"++) $ map show ([1..] :: [Integer])
+names = (map (\c -> [c]) "abcdefghijklmnopqrstuvwxyz" ++) . map ("var"++) $ map show ([1..] :: [Integer])
 
 firstUnusedName :: [Name] -> [LamExpr] -> Name
 firstUnusedName [] _ = error "firstUnusedName"

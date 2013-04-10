@@ -9,4 +9,22 @@ http://homepages.cwi.nl/~tromp/cl/cl.html
 
 ./encode and ./decode also read standard input, but only works for
 input without free variables. The encoding convention also follows the
-above link.
+above link. ./rename accept input with free variables.
+
+The compiler generate Haskell code.
+
+But the generated code can only be compiled unoptimized.
+
+This command
+
+./compiler < input/queens > queens.hs
+ghc --make queens.hs
+./queens
+
+works, but this
+
+./compiler < input/queens > queens.hs
+ghc -O2 --make queens.hs
+./queens
+
+would fail.

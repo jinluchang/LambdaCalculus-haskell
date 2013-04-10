@@ -1,4 +1,7 @@
-all : interpreter encode decode rename
+all : compiler interpreter encode decode rename
+
+compiler : *.hs
+	ghc -Wall -O2 -o compiler --make Compiler.hs
 
 interpreter : *.hs
 	ghc -Wall -O2 -o interpreter --make Interpreter.hs
@@ -16,4 +19,4 @@ prof : *.hs
 	ghc -prof -auto-all -Wall -O2 -o interpreter --make Interpreter.hs
 
 clean :
-	rm interpreter encode decode rename *.o *.hi || :
+	rm compiler interpreter encode decode rename *.o *.hi || :

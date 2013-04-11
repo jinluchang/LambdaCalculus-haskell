@@ -10,8 +10,12 @@ preludeStr =
 
 compile :: LamExpr -> String
 compile (Var x) = x
-compile (Ap e1 e2) = "applyC (" ++ compile e1 ++ ") (" ++ compile e2 ++ ")"
+compile (Ap e1 e2) = "applyC " ++ compileA e1 ++ " " ++ compileA e2
 compile (Lam x e) = "LamC $ \\" ++ x ++ " -> " ++ compile e
+
+compileA :: LamExpr -> String
+compileA (Var x) = x
+compileA e = "(" ++ compile e ++ ")"
 
 mainStr :: String
 mainStr =
@@ -23,7 +27,7 @@ progGen e =
     preludeStr ++
     mainStr ++ "\n" ++
     "expr :: LamExprC\n" ++
-    "expr = " ++ compile e ++ "\n"
+    "expr = " ++ compile e
 
 main :: IO ()
 main = do

@@ -18,5 +18,13 @@ rename : *.hs
 prof : *.hs
 	ghc -prof -auto-all -Wall -O2 -o interpreter --make Interpreter.hs
 
+test-compile : compiler
+	rm -rf test || :
+	mkdir test
+	./compiler < input/queens > test/test.hs
+	cat test/test.hs
+	cd test ; ghc -Wall --make test.hs ; time ./test
+	rm -rf test
+
 clean :
 	rm compiler interpreter encode decode rename *.o *.hi || :

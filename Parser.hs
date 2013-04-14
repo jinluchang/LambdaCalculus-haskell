@@ -618,7 +618,6 @@ pName = do
 pLam :: Parser LamExpr
 pLam = do
     _ <- char '\\'
-    pSpaces
     xs <- many1 (try $ pSpaces >> pName)
     pSpaces
     _ <- try $ string "->"

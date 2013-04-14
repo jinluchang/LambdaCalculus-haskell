@@ -2,19 +2,25 @@
 
 module Main where
 
+import Data.List
+import Data.Maybe
+import System.Environment
+
 import Parser
 import Evaluation
 import StringQQ
 
 main :: IO ()
 main = do
+    args <- getArgs
     exprStr <- getContents
-    let exprRead = unBuildExprBruijn' . explicitFreeVariable . buildExprBruijn . simplifyExprInline $ readExpr exprStr
+    let expr = (if "-O" `elem` args then simplifyExprInline else id) $ readExpr exprStr
+        exprRead = unBuildExprBruijn' . explicitFreeVariable . buildExprBruijn $ expr
     putStrLn $ progGen exprRead
 
 explicitFreeVariable :: LamExprBruijn -> LamExprBruijn
 explicitFreeVariable = go where
-    go (VarBruijn x) = VarBruijn $ "(VarC \"" ++ x ++ "\")"
+    go (VarBruijn x) = VarBruijn $ "$Free:" ++ x
     go (BoundBruijn n) = BoundBruijn n
     go (ApBruijn e1 e2) = ApBruijn (go e1) (go e2)
     go (LamBruijn eb) = LamBruijn $ go eb
@@ -29,11 +35,13 @@ unBuildExprBruijn' = go names where
     go _ _ = error "unBuildExprBruijn"
 
 compile :: LamExpr -> String
+compile (Var x) | "$Free:" `isPrefixOf` x = "VarC \"" ++ fromJust (stripPrefix "$Free:" x) ++ "\""
 compile (Var x) = x
 compile (Ap e1 e2) = "applyC " ++ compileA e1 ++ " " ++ compileA e2
 compile (Lam x e) = "LamC $ \\" ++ x ++ " -> " ++ compile e
 
 compileA :: LamExpr -> String
+compileA (Var x) | "$Free:" `isPrefixOf` x = "(" ++ compile (Var x) ++ ")"
 compileA (Var x) = x
 compileA e = "(" ++ compile e ++ ")"
 

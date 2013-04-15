@@ -21,7 +21,7 @@ prof : *.hs
 test-compile : compiler
 	rm -rf test || :
 	mkdir test
-	./compiler < input/queens > test/test.hs
+	./compiler -O < input/queens > test/test.hs
 	cat test/test.hs
 	cd test ; ghc -Wall --make test.hs ; time ./test
 	rm -rf test

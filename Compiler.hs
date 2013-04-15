@@ -5,6 +5,7 @@ module Main where
 import Data.List
 import Data.Maybe
 import System.Environment
+import Control.Arrow
 
 import Parser
 import Evaluation
@@ -26,30 +27,82 @@ explicitFreeVariable = go where
     go (LamBruijn eb) = LamBruijn $ go eb
 
 unBuildExprBruijn' :: LamExprBruijn -> LamExpr
-unBuildExprBruijn' = go names where
-    go _ (VarBruijn x) = Var x
-    go ns (ApBruijn e1 e2) = Ap (go ns e1) (go ns e2)
-    go (n:ns) (LamBruijn eb) = Lam n' $ go ns' eb' where
+unBuildExprBruijn' = snd . go names' where
+    go ns (VarBruijn x) = (ns, Var x)
+    go ns (ApBruijn e1 e2) = (ns'', Ap e1' e2') where
+        (ns', e1') = go ns e1
+        (ns'', e2') = go ns' e2
+    go (n:ns) (LamBruijn eb) = second (Lam n') $ go ns' eb' where
         (n',ns') = if eb' `hasVarBruijn` n then (n,ns) else ("_", n:ns)
         eb' = substituteBruijn (VarBruijn n) eb
     go _ _ = error "unBuildExprBruijn"
 
+names' :: [Name]
+names' = map ("exprVar" ++) $ map show ([1..] :: [Integer])
+
 compile :: LamExpr -> String
 compile (Var x) | "$Free:" `isPrefixOf` x = "VarC \"" ++ fromJust (stripPrefix "$Free:" x) ++ "\""
-compile (Var x) = x
+                | otherwise = x
 compile (Ap e1 e2) = "applyC " ++ compileA e1 ++ " " ++ compileA e2
 compile (Lam x e) = "LamC $ \\" ++ x ++ " -> " ++ compile e
 
 compileA :: LamExpr -> String
 compileA (Var x) | "$Free:" `isPrefixOf` x = "(" ++ compile (Var x) ++ ")"
-compileA (Var x) = x
+                 | otherwise = x
 compileA e = "(" ++ compile e ++ ")"
 
 progGen :: LamExpr -> String
 progGen e =
     preludeStr ++
     "expression :: LamExprC\n" ++
-    "expression = " ++ compile e
+    "expression = " ++ (compileSTG . exprToSTG $ e)
+
+data ExprSTG a
+    = SymSTG a
+    | VarSTG a
+    | AppSTG a [a]
+    | LetSTG [(a,ExprSTG a)] (ExprSTG a)
+    | LamSTG a (ExprSTG a)
+
+type LamExprSTG = ExprSTG Name
+
+namesSTG :: [Name]
+namesSTG = map ("stgVar" ++) $ map show ([1..] :: [Integer])
+
+exprToSTG :: LamExpr -> LamExprSTG
+exprToSTG = snd . go namesSTG where
+    go ns expr = case expr of
+        Var x | "$Free:" `isPrefixOf` x -> (ns, SymSTG $ fromJust (stripPrefix "$Free:" x))
+              | otherwise -> (ns, VarSTG x)
+        Ap e1 e2 -> goAp ns e1 [e2]
+        Lam x e -> second (LamSTG x) $ go ns e
+    goAp ns (Ap f a) as = goAp ns f (a:as)
+    goAp ns f as = (,) ns'' $ if null bs then elet else LetSTG bs elet where
+        elet = AppSTG (head nsl) (tail nsl)
+        (ns'', bs) = second (zip nsl') $ mapAccumL go ns' fas
+        (nsl',ns') = splitAt (length fas) ns
+        nsl = padList (f:as) nsl'
+        padList [] xs = xs
+        padList (x:xs) ys | isComplex x = head ys : padList xs (tail ys)
+                          | otherwise = xn : padList xs ys
+            where (Var xn) = x
+        fas = filter isComplex (f:as)
+        isComplex (Var x) | "$Free:" `isPrefixOf` x = True
+                          | otherwise = False
+        isComplex _ = True
+
+compileSTG :: LamExprSTG -> String
+compileSTG = go where
+    go estg = case estg of
+        SymSTG x -> "VarC \"" ++ x ++ "\""
+        VarSTG x -> x
+        AppSTG f as -> showApp (tail as) $ "applyC " ++ f ++ " " ++ head as
+        LetSTG ds e -> "\n let\n" ++ showDefns ds ++ " in " ++ go e
+        LamSTG x e -> "LamC $ \\" ++ x ++ " -> " ++ go e
+    showApp [] appStr = appStr
+    showApp (a:as) appStr = showApp as $ "applyC (" ++ appStr ++ ") " ++ a
+    showDefn (v,e) = v ++ " = " ++ go e
+    showDefns ds = unlines . map ("  " ++) . lines . intercalate "\n" $ map showDefn ds
 
 preludeStr :: String
 preludeStr = [stringQQ|

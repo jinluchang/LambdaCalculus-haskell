@@ -55,50 +55,116 @@ progGen :: LamExpr -> String
 progGen e =
     preludeStr ++
     "expression :: LamExprC\n" ++
-    "expression = " ++ (compileSTG . exprToSTG $ e)
+    "expression = " ++ (compileLET . fixPoint fullLazinessTransLet . validTransLET . exprToLET $ e)
 
-data ExprSTG a
-    = SymSTG a
-    | VarSTG a
-    | AppSTG a [a]
-    | LetSTG [(a,ExprSTG a)] (ExprSTG a)
-    | LamSTG a (ExprSTG a)
+fixPoint :: Eq a => (a -> a) -> a -> a
+fixPoint f x = go $ iterate f x where
+    go (x1:x2:xs) | x1 == x2 = x1
+                  | otherwise = go (x2:xs)
+    go _ = error $ "fixPoint"
 
-type LamExprSTG = ExprSTG Name
+data ExprLET a
+    = SymLET a
+    | VarLET a
+    | AppLET a [a] -- non-empty
+    | LetLET [(a, ExprLET a)] (ExprLET a) -- cannot be Let
+    | LamLET [a] (ExprLET a) -- cannnot be Lam
+  deriving Eq
 
-namesSTG :: [Name]
-namesSTG = map ("stgVar" ++) $ map show ([1..] :: [Integer])
+type LamExprLET = ExprLET Name
 
-exprToSTG :: LamExpr -> LamExprSTG
-exprToSTG = snd . go namesSTG where
+namesLET :: [Name]
+namesLET = map ("stgVar" ++) $ map show ([1..] :: [Integer])
+
+exprToLET :: LamExpr -> LamExprLET
+exprToLET = snd . go namesLET where
     go ns expr = case expr of
-        Var x | "$Free:" `isPrefixOf` x -> (ns, SymSTG $ fromJust (stripPrefix "$Free:" x))
-              | otherwise -> (ns, VarSTG x)
+        Var x | "$Free:" `isPrefixOf` x -> (ns, SymLET $ fromJust (stripPrefix "$Free:" x))
+              | otherwise -> (ns, VarLET x)
         Ap e1 e2 -> goAp ns e1 [e2]
-        Lam x e -> second (LamSTG x) $ go ns e
+        Lam x e -> second (goLam x) $ go ns e
+    goLam x (LamLET xs e) = LamLET (x:xs) e
+    goLam x e = LamLET [x] e
     goAp ns (Ap f a) as = goAp ns f (a:as)
-    goAp ns f as = (,) ns'' $ if null bs then elet else LetSTG bs elet where
-        elet = AppSTG (head nsl) (tail nsl)
+    goAp ns f as = (,) ns'' $ if null bs then elet else LetLET bs elet where
+        elet = AppLET (head nsl) (tail nsl)
         (ns'', bs) = second (zip nsl') $ mapAccumL go ns' fas
         (nsl',ns') = splitAt (length fas) ns
         nsl = padList (f:as) nsl'
         padList [] xs = xs
         padList (x:xs) ys | isComplex x = head ys : padList xs (tail ys)
                           | otherwise = xn : padList xs ys
-            where (Var xn) = x
+          where (Var xn) = x
         fas = filter isComplex (f:as)
         isComplex (Var x) | "$Free:" `isPrefixOf` x = True
                           | otherwise = False
         isComplex _ = True
 
-compileSTG :: LamExprSTG -> String
-compileSTG = go where
+isLetLET :: ExprLET a -> Bool
+isLetLET (LetLET _ _) = True
+isLetLET _ = False
+
+fromLetLET :: ExprLET a -> ([(a, ExprLET a)], ExprLET a)
+fromLetLET (LetLET bs e) = (bs, e)
+fromLetLET _ = error "fromLetLet"
+
+validTransLET :: ExprLET a -> ExprLET a
+validTransLET = go where
+    go expr = case expr of
+        SymLET x -> SymLET x
+        VarLET x -> VarLET x
+        AppLET f [] -> VarLET f
+        AppLET f as -> AppLET f as
+        LetLET [] e -> e
+        LetLET bs (LetLET bs' e) -> go $ LetLET (bs ++ bs') $ go e
+        LetLET bs e -> LetLET (bs'1'bs1 ++ bs'1'bs2 ++ bs'2) $ go e
+          where
+            bs' = map (second go) bs
+            (bs'1, bs'2) = partition (isLetLET . snd) bs'
+            bs'1' = map (second fromLetLET) bs'1
+            bs'1'bs1 = concatMap (fst . snd) bs'1'
+            bs'1'bs2 = map (id *** snd) bs'1'
+        LamLET [] e -> e
+        LamLET xs (LamLET xs' e) -> LamLET (xs ++ xs') $ go e
+        LamLET xs e -> LamLET xs $ go e
+
+isNotFreeInLET :: Name -> LamExprLET -> Bool
+isNotFreeInLET "_" = const True
+isNotFreeInLET x = go where
+    go expr = case expr of
+        SymLET _ -> True
+        VarLET y -> x /= y
+        AppLET f xs -> x `notElem` (f:xs)
+        LetLET bs e -> all (go . snd) bs && go e
+        LamLET _ e -> go e
+
+isNoneFreeInLET :: [Name] -> LamExprLET -> Bool
+isNoneFreeInLET xs e = all (`isNotFreeInLET` e) xs
+
+fullLazinessTransLet :: LamExprLET -> LamExprLET
+fullLazinessTransLet = validTransLET . go where
+    go expr = case expr of
+        LamLET xs (LetLET bs e) -> (if null bs1 then id else LetLET bs1) $
+            LamLET xs $ LetLET bs2 $ go e
+          where
+            (bs1, bs2) = iter bs [] xs
+            iter bs1' bs2' [] = (bs1', bs2')
+            iter bs1' bs2' xs' = iter bs1'' (bs2'' ++ bs2') $ map fst bs2''
+              where
+                (bs1'', bs2'') = partition ((xs' `isNoneFreeInLET`) . snd) $ map (second go) bs1'
+
+        LetLET bs e -> LetLET (map (second go) bs) $ go e
+        _ -> expr
+
+compileLET :: LamExprLET -> String
+compileLET = go where
     go estg = case estg of
-        SymSTG x -> "VarC \"" ++ x ++ "\""
-        VarSTG x -> x
-        AppSTG f as -> showApp (tail as) $ "applyC " ++ f ++ " " ++ head as
-        LetSTG ds e -> "\n let\n" ++ showDefns ds ++ " in " ++ go e
-        LamSTG x e -> "LamC $ \\" ++ x ++ " -> " ++ go e
+        SymLET x -> "VarC \"" ++ x ++ "\""
+        VarLET x -> x
+        AppLET f as -> showApp (tail as) $ "applyC " ++ f ++ " " ++ (head as)
+        LetLET ds e -> "\n let\n" ++ showDefns ds ++ " in " ++ go e
+        LamLET [] e -> go e
+        LamLET (x:xs) e -> "LamC $ \\" ++ x ++ " -> " ++ go (LamLET xs e)
     showApp [] appStr = appStr
     showApp (a:as) appStr = showApp as $ "applyC (" ++ appStr ++ ") " ++ a
     showDefn (v,e) = v ++ " = " ++ go e

@@ -112,16 +112,29 @@ type LamExprC = ExprC Name
 -- {-
 
 buildExprC :: Eq a => Expr a -> ExprC a
-buildExprC = go [] . buildExprBruijn where
-    go env (LamBruijn e) = LamC $ \x -> go (x:env) e
-    go env (BoundBruijn n) = env !! n
-    go env (ApBruijn e1 e2) = applyC (go env e1) (go env e2) where
-    go _ (VarBruijn x) = VarC x
+buildExprC expr = evalC (buildExprBruijn expr) []
 
-applyC :: ExprC a -> ExprC a -> ExprC a
-applyC fun arg = case fun of
-    LamC f -> f arg
-    _ -> ApC fun arg
+evalC :: ExprBruijn a -> [ExprC a] -> ExprC a
+evalC (VarBruijn x) _ = VarC x
+evalC (BoundBruijn n) env = env !! n
+evalC (LamBruijn e) env = LamC $ \x -> evalC e (x:env)
+evalC (ApBruijn e1 e2) env = applyC e1 e2 env
+
+applyC :: ExprBruijn a -> ExprBruijn a -> [ExprC a] -> ExprC a
+applyC fun arg env = case evalC fun env of
+    LamC f -> f $ evalC arg env
+    funC -> case evalC arg env of
+        argC -> ApC funC argC
+
+evaluateC :: ExprBruijn a -> [ExprC a] -> ExprC a
+evaluateC expr environment = go expr environment id where
+    go e env cont = case e of
+        VarBruijn x -> cont $ VarC x
+        BoundBruijn n -> cont $ env !! n
+        LamBruijn el -> cont $ LamC $ \x -> evaluateC el (x:env)
+        ApBruijn ef ea -> go ef env $ \funC -> case funC of
+            LamC f -> cont $ f (evaluateC ea env)
+            _ -> go ea env $ \argC -> cont $ ApC funC argC
 
 unBuildExprC :: LamExprC -> LamExpr
 unBuildExprC = go variableNames where

@@ -38,7 +38,7 @@ unBuildExprBruijn' = snd . go names' where
     go _ _ = error "unBuildExprBruijn"
 
 names' :: [Name]
-names' = map ("exprVar" ++) $ map show ([1..] :: [Integer])
+names' = map ("v" ++) $ map show ([1..] :: [Integer])
 
 compile :: LamExpr -> String
 compile (Var x) | "$Free:" `isPrefixOf` x = "VarC \"" ++ fromJust (stripPrefix "$Free:" x) ++ "\""
@@ -55,7 +55,13 @@ progGen :: LamExpr -> String
 progGen e =
     preludeStr ++
     "expression :: LamExprC\n" ++
-    "expression = " ++ (compileLET . fixPoint fullLazinessTransLet . validTransLET . exprToLET $ e)
+    "expression = " ++
+    ( compileStg
+    . convertExprCoreToExprStg
+    . fixPoint fullLazinessTransLet
+    . validTransCore
+    . convertExprToExprCore
+    $ e )
 
 fixPoint :: Eq a => (a -> a) -> a -> a
 fixPoint f x = go $ iterate f x where
@@ -63,31 +69,31 @@ fixPoint f x = go $ iterate f x where
                   | otherwise = go (x2:xs)
     go _ = error $ "fixPoint"
 
-data ExprLET a
-    = SymLET a
-    | VarLET a
-    | AppLET a [a] -- non-empty
-    | LetLET [(a, ExprLET a)] (ExprLET a) -- cannot be Let
-    | LamLET [a] (ExprLET a) -- cannnot be Lam
+data ExprCore a
+    = SymCore Name
+    | VarCore a
+    | AppCore a [a] -- non-empty
+    | LetCore [(a, ExprCore a)] (ExprCore a) -- cannot be Let or Lam
+    | LamCore [a] (ExprCore a) -- cannnot be Lam
   deriving Eq
 
-type LamExprLET = ExprLET Name
+type LamExprCore = ExprCore Name
 
-namesLET :: [Name]
-namesLET = map ("stgVar" ++) $ map show ([1..] :: [Integer])
+namesCore :: [Name]
+namesCore = map ("cv" ++) $ map show ([1..] :: [Integer])
 
-exprToLET :: LamExpr -> LamExprLET
-exprToLET = snd . go namesLET where
+convertExprToExprCore :: LamExpr -> LamExprCore
+convertExprToExprCore = snd . go namesCore where
     go ns expr = case expr of
-        Var x | "$Free:" `isPrefixOf` x -> (ns, SymLET $ fromJust (stripPrefix "$Free:" x))
-              | otherwise -> (ns, VarLET x)
+        Var x | "$Free:" `isPrefixOf` x -> (ns, SymCore $ fromJust (stripPrefix "$Free:" x))
+              | otherwise -> (ns, VarCore x)
         Ap e1 e2 -> goAp ns e1 [e2]
         Lam x e -> second (goLam x) $ go ns e
-    goLam x (LamLET xs e) = LamLET (x:xs) e
-    goLam x e = LamLET [x] e
+    goLam x (LamCore xs e) = LamCore (x:xs) e
+    goLam x e = LamCore [x] e
     goAp ns (Ap f a) as = goAp ns f (a:as)
-    goAp ns f as = (,) ns'' $ if null bs then elet else LetLET bs elet where
-        elet = AppLET (head nsl) (tail nsl)
+    goAp ns f as = (,) ns'' $ if null bs then elet else LetCore bs elet where
+        elet = AppCore (head nsl) (tail nsl)
         (ns'', bs) = second (zip nsl') $ mapAccumL go ns' fas
         (nsl',ns') = splitAt (length fas) ns
         nsl = padList (f:as) nsl'
@@ -100,75 +106,138 @@ exprToLET = snd . go namesLET where
                           | otherwise = False
         isComplex _ = True
 
-isLetLET :: ExprLET a -> Bool
-isLetLET (LetLET _ _) = True
-isLetLET _ = False
+isLetCore :: ExprCore a -> Bool
+isLetCore (LetCore _ _) = True
+isLetCore _ = False
 
-fromLetLET :: ExprLET a -> ([(a, ExprLET a)], ExprLET a)
-fromLetLET (LetLET bs e) = (bs, e)
-fromLetLET _ = error "fromLetLet"
+fromLetCore :: ExprCore a -> ([(a, ExprCore a)], ExprCore a)
+fromLetCore (LetCore bs e) = (bs, e)
+fromLetCore _ = error "fromLetLet"
 
-validTransLET :: ExprLET a -> ExprLET a
-validTransLET = go where
+validTransCore :: ExprCore a -> ExprCore a
+validTransCore = go where
     go expr = case expr of
-        SymLET x -> SymLET x
-        VarLET x -> VarLET x
-        AppLET f [] -> VarLET f
-        AppLET f as -> AppLET f as
-        LetLET [] e -> e
-        LetLET bs (LetLET bs' e) -> go $ LetLET (bs ++ bs') $ go e
-        LetLET bs e -> LetLET (bs'1'bs1 ++ bs'1'bs2 ++ bs'2) $ go e
+        SymCore x -> SymCore x
+        VarCore x -> VarCore x
+        AppCore f [] -> VarCore f
+        AppCore f as -> AppCore f as
+        LetCore [] e -> e
+        LetCore bs (LetCore bs' e) -> go $ LetCore (bs ++ bs') $ go e
+        LetCore bs e -> LetCore (bs'1'bs1 ++ bs'1'bs2 ++ bs'2) $ go e
           where
             bs' = map (second go) bs
-            (bs'1, bs'2) = partition (isLetLET . snd) bs'
-            bs'1' = map (second fromLetLET) bs'1
+            (bs'1, bs'2) = partition (isLetCore . snd) bs'
+            bs'1' = map (second fromLetCore) bs'1
             bs'1'bs1 = concatMap (fst . snd) bs'1'
             bs'1'bs2 = map (id *** snd) bs'1'
-        LamLET [] e -> e
-        LamLET xs (LamLET xs' e) -> LamLET (xs ++ xs') $ go e
-        LamLET xs e -> LamLET xs $ go e
+        LamCore [] e -> e
+        LamCore xs (LamCore xs' e) -> LamCore (xs ++ xs') $ go e
+        LamCore xs e -> LamCore xs $ go e
 
-isNotFreeInLET :: Name -> LamExprLET -> Bool
-isNotFreeInLET "_" = const True
-isNotFreeInLET x = go where
+isNotFreeInCore :: Name -> LamExprCore -> Bool
+isNotFreeInCore "_" = const True
+isNotFreeInCore x = go where
     go expr = case expr of
-        SymLET _ -> True
-        VarLET y -> x /= y
-        AppLET f xs -> x `notElem` (f:xs)
-        LetLET bs e -> all (go . snd) bs && go e
-        LamLET _ e -> go e
+        SymCore _ -> True
+        VarCore y -> x /= y
+        AppCore f xs -> x `notElem` (f:xs)
+        LetCore bs e -> all (go . snd) bs && go e
+        LamCore _ e -> go e
 
-isNoneFreeInLET :: [Name] -> LamExprLET -> Bool
-isNoneFreeInLET xs e = all (`isNotFreeInLET` e) xs
+isNoneFreeInCore :: [Name] -> LamExprCore -> Bool
+isNoneFreeInCore xs e = all (`isNotFreeInCore` e) xs
 
-fullLazinessTransLet :: LamExprLET -> LamExprLET
-fullLazinessTransLet = validTransLET . go where
+fullLazinessTransLet :: LamExprCore -> LamExprCore
+fullLazinessTransLet = validTransCore . go where
     go expr = case expr of
-        LamLET xs (LetLET bs e) -> (if null bs1 then id else LetLET bs1) $
-            LamLET xs $ LetLET bs2 $ go e
+        LamCore xs (LetCore bs e) -> (if null bs1 then id else LetCore bs1) $
+            LamCore xs $ LetCore bs2 $ go e
           where
             (bs1, bs2) = iter bs [] xs
             iter bs1' bs2' [] = (bs1', bs2')
             iter bs1' bs2' xs' = iter bs1'' (bs2'' ++ bs2') $ map fst bs2''
               where
-                (bs1'', bs2'') = partition ((xs' `isNoneFreeInLET`) . snd) $ map (second go) bs1'
+                (bs1'', bs2'') = partition ((xs' `isNoneFreeInCore`) . snd) $ map (second go) bs1'
 
-        LetLET bs e -> LetLET (map (second go) bs) $ go e
+        LetCore bs e -> LetCore (map (second go) bs) $ go e
         _ -> expr
 
-compileLET :: LamExprLET -> String
-compileLET = go where
+compileCore :: LamExprCore -> String
+compileCore = go where
     go estg = case estg of
-        SymLET x -> "VarC \"" ++ x ++ "\""
-        VarLET x -> x
-        AppLET f as -> showApp (tail as) $ "applyC " ++ f ++ " " ++ (head as)
-        LetLET ds e -> "\n let\n" ++ showDefns ds ++ " in " ++ go e
-        LamLET [] e -> go e
-        LamLET (x:xs) e -> "LamC $ \\" ++ x ++ " -> " ++ go (LamLET xs e)
+        SymCore x -> "VarC \"" ++ x ++ "\""
+        VarCore x -> x
+        AppCore f as -> showApp (tail as) $ "applyC " ++ f ++ " " ++ (head as)
+        LetCore ds e -> "\n let\n" ++ showDefns ds ++ " in " ++ go e
+        LamCore [] e -> go e
+        LamCore (x:xs) e -> "LamC $ \\" ++ x ++ " -> " ++ go (LamCore xs e)
     showApp [] appStr = appStr
     showApp (a:as) appStr = showApp as $ "applyC (" ++ appStr ++ ") " ++ a
     showDefn (v,e) = v ++ " = " ++ go e
     showDefns ds = unlines . map ("  " ++) . lines . intercalate "\n" $ map showDefn ds
+
+data ExprStg a
+    = SymStg Name
+    | VarStg a
+    | AppStg a [a] -- non-empty
+    | LetStg [(a, ClosureStg a)] (ExprStg a) -- cannot be Let
+  deriving Eq
+
+data ClosureStg a
+    = UpdatableStg [a] (ExprStg a)
+    | NonUpdatableStg [a] (ExprStg a)
+    | FunctionStg [a] [a] (ExprStg a)
+  deriving Eq
+
+type LamExprStg = ExprStg Name
+
+convertExprCoreToExprStg :: LamExprCore -> LamExprStg
+convertExprCoreToExprStg = go where
+    go exprLET = case exprLET of
+        SymCore x -> SymStg x
+        VarCore x -> VarStg x
+        AppCore f as -> AppStg f as
+        LetCore ds e -> LetStg ds' $ go e where
+            ds' = map (second toClosure) ds
+        LamCore xs _ -> error $ "convertExprCoreToExprStg : go : LamCore : " ++ show xs
+    toClosure exprLET = case exprLET of
+        LamCore xs e -> FunctionStg fvs xs e' where
+            fvs = freeVariablesInStg e' \\ xs
+            e' = go e
+        VarCore x -> error $ "convertExprCoreToExprStg : toClosure : " ++ x
+        e -> UpdatableStg (freeVariablesInStg e') e' where
+            e' = go e
+
+freeVariablesInStg :: LamExprStg -> [Name]
+freeVariablesInStg = go where
+    go exprStg = case exprStg of
+        SymStg _ -> []
+        VarStg x -> [x]
+        AppStg f as -> nub (f:as)
+        LetStg ds e -> foldr union (freeVariablesInStg e) $ map (freeVariablesInClosureStg . snd) ds
+
+freeVariablesInClosureStg :: ClosureStg a -> [a]
+freeVariablesInClosureStg = go where
+    go closure = case closure of
+        UpdatableStg fvs _ -> fvs
+        NonUpdatableStg fvs _ -> fvs
+        FunctionStg fvs _ _ -> fvs
+
+compileStg :: LamExprStg -> String
+compileStg = go where
+    go estg = case estg of
+        SymStg x -> "VarC \"" ++ x ++ "\""
+        VarStg x -> x
+        AppStg f as -> goApp (tail as) $ "applyC " ++ f ++ " " ++ (head as)
+        LetStg ds e -> "\n let\n" ++ goDefns ds ++ " in " ++ go e
+    goClosure closure = case closure of
+        UpdatableStg fvs e -> "{- " ++ unwords fvs ++ " -} " ++ go e
+        NonUpdatableStg fvs e -> "{- " ++ unwords fvs ++ " -} " ++ go e
+        FunctionStg fvs xs e -> "{- " ++ unwords fvs ++ " -} " ++ (concat $ map (\x -> "LamC $ \\" ++ x ++ " -> ") xs ++ [go e])
+    goApp [] appStr = appStr
+    goApp (a:as) appStr = goApp as $ "applyC (" ++ appStr ++ ") " ++ a
+    goDefn (v,e) = v ++ " = " ++ goClosure e
+    goDefns ds = unlines . map ("  " ++) . lines . intercalate "\n" $ map goDefn ds
 
 preludeStr :: String
 preludeStr = [stringQQ|

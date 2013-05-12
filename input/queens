@@ -88,4 +88,4 @@ define (\size -> fix (\search n ks ->
 	size nil nil)
 \searchNQ ->
 
-length (searchNQ 8)
+length (searchNQ 8) f x

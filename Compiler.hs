@@ -3,9 +3,10 @@
 module Main where
 
 import Data.List
-import Data.Maybe
 import System.Environment
 import Control.Arrow
+import Control.Monad.State
+import Control.Applicative
 
 import Parser
 import Evaluation
@@ -16,52 +17,22 @@ main = do
     args <- getArgs
     exprStr <- getContents
     let expr = (if "-O" `elem` args then simplifyExprInline else id) $ readExpr exprStr
-        exprRead = unBuildExprBruijn' . explicitFreeVariable . buildExprBruijn $ expr
-    putStrLn $ progGen exprRead
+        exprCoreNM = convertExprToExprCore expr >>= floatComplexExpression
+        exprCore = evalState exprCoreNM namesCore
+        exprStg = convertExprCoreToExprStg exprCore
+    if "-C" `elem` args
+        then do
+            putStrLn "/*\n"
+            putStrLn $ showStg exprStg
+            putStrLn "*/\n"
+            putStrLn $ compileStgToC exprStg
+        else putStrLn $ progGen $ compileStg exprStg
 
-explicitFreeVariable :: LamExprBruijn -> LamExprBruijn
-explicitFreeVariable = go where
-    go (VarBruijn x) = VarBruijn $ "$Free:" ++ x
-    go (BoundBruijn n) = BoundBruijn n
-    go (ApBruijn e1 e2) = ApBruijn (go e1) (go e2)
-    go (LamBruijn eb) = LamBruijn $ go eb
-
-unBuildExprBruijn' :: LamExprBruijn -> LamExpr
-unBuildExprBruijn' = snd . go names' where
-    go ns (VarBruijn x) = (ns, Var x)
-    go ns (ApBruijn e1 e2) = (ns'', Ap e1' e2') where
-        (ns', e1') = go ns e1
-        (ns'', e2') = go ns' e2
-    go (n:ns) (LamBruijn eb) = second (Lam n') $ go ns' eb' where
-        (n',ns') = if eb' `hasVarBruijn` n then (n,ns) else ("_", n:ns)
-        eb' = substituteBruijn (VarBruijn n) eb
-    go _ _ = error "unBuildExprBruijn"
-
-names' :: [Name]
-names' = map ("v" ++) $ map show ([1..] :: [Integer])
-
-compile :: LamExpr -> String
-compile (Var x) | "$Free:" `isPrefixOf` x = "VarC \"" ++ fromJust (stripPrefix "$Free:" x) ++ "\""
-                | otherwise = x
-compile (Ap e1 e2) = "applyC " ++ compileA e1 ++ " " ++ compileA e2
-compile (Lam x e) = "LamC $ \\" ++ x ++ " -> " ++ compile e
-
-compileA :: LamExpr -> String
-compileA (Var x) | "$Free:" `isPrefixOf` x = "(" ++ compile (Var x) ++ ")"
-                 | otherwise = x
-compileA e = "(" ++ compile e ++ ")"
-
-progGen :: LamExpr -> String
-progGen e =
+progGen :: String -> String
+progGen eStr =
     preludeStr ++
     "expression :: LamExprC\n" ++
-    "expression = " ++
-    ( compileStg
-    . convertExprCoreToExprStg
-    . fixPoint fullLazinessTransLet
-    . validTransCore
-    . convertExprToExprCore
-    $ e )
+    "expression = " ++ eStr
 
 fixPoint :: Eq a => (a -> a) -> a -> a
 fixPoint f x = go $ iterate f x where
@@ -69,175 +40,331 @@ fixPoint f x = go $ iterate f x where
                   | otherwise = go (x2:xs)
     go _ = error $ "fixPoint"
 
+type NameM = State [Name]
+
+newName :: NameM Name
+newName = state $ \ns -> (head ns, tail ns)
+
 data ExprCore a
     = SymCore Name
     | VarCore a
-    | AppCore a [a] -- non-empty
-    | LetCore [(a, ExprCore a)] (ExprCore a) -- cannot be Let or Lam
-    | LamCore [a] (ExprCore a) -- cannnot be Lam
-  deriving Eq
+    | AppCore (ExprCore a) (ExprCore a)
+    | LetCore (BindingCore a) (ExprCore a)
+    | LamCore a (ExprCore a)
+    deriving (Eq, Show)
+
+data BindingCore a
+    = NonRec a (ExprCore a)
+    | Rec [(a, ExprCore a)]
+    deriving (Eq, Show)
 
 type LamExprCore = ExprCore Name
 
+convertExprToExprCore :: LamExpr -> NameM LamExprCore
+convertExprToExprCore = go [] . buildExprBruijn where
+    go env exprBruijn = case exprBruijn of
+        VarBruijn x -> return $ SymCore x
+        BoundBruijn n -> return $ VarCore $ env !! n
+        ApBruijn e1 e2 -> do
+            e1' <- go env e1
+            e2' <- go env e2
+            return $ AppCore e1' e2'
+        LamBruijn eb -> do
+            x <- newName
+            LamCore x <$> go (x:env) eb
+
 namesCore :: [Name]
-namesCore = map ("cv" ++) $ map show ([1..] :: [Integer])
-
-convertExprToExprCore :: LamExpr -> LamExprCore
-convertExprToExprCore = snd . go namesCore where
-    go ns expr = case expr of
-        Var x | "$Free:" `isPrefixOf` x -> (ns, SymCore $ fromJust (stripPrefix "$Free:" x))
-              | otherwise -> (ns, VarCore x)
-        Ap e1 e2 -> goAp ns e1 [e2]
-        Lam x e -> second (goLam x) $ go ns e
-    goLam x (LamCore xs e) = LamCore (x:xs) e
-    goLam x e = LamCore [x] e
-    goAp ns (Ap f a) as = goAp ns f (a:as)
-    goAp ns f as = (,) ns'' $ if null bs then elet else LetCore bs elet where
-        elet = AppCore (head nsl) (tail nsl)
-        (ns'', bs) = second (zip nsl') $ mapAccumL go ns' fas
-        (nsl',ns') = splitAt (length fas) ns
-        nsl = padList (f:as) nsl'
-        padList [] xs = xs
-        padList (x:xs) ys | isComplex x = head ys : padList xs (tail ys)
-                          | otherwise = xn : padList xs ys
-          where (Var xn) = x
-        fas = filter isComplex (f:as)
-        isComplex (Var x) | "$Free:" `isPrefixOf` x = True
-                          | otherwise = False
-        isComplex _ = True
-
-isLetCore :: ExprCore a -> Bool
-isLetCore (LetCore _ _) = True
-isLetCore _ = False
-
-fromLetCore :: ExprCore a -> ([(a, ExprCore a)], ExprCore a)
-fromLetCore (LetCore bs e) = (bs, e)
-fromLetCore _ = error "fromLetLet"
-
-validTransCore :: ExprCore a -> ExprCore a
-validTransCore = go where
-    go expr = case expr of
-        SymCore x -> SymCore x
-        VarCore x -> VarCore x
-        AppCore f [] -> VarCore f
-        AppCore f as -> AppCore f as
-        LetCore [] e -> e
-        LetCore bs (LetCore bs' e) -> go $ LetCore (bs ++ bs') $ go e
-        LetCore bs e -> LetCore (bs'1'bs1 ++ bs'1'bs2 ++ bs'2) $ go e
-          where
-            bs' = map (second go) bs
-            (bs'1, bs'2) = partition (isLetCore . snd) bs'
-            bs'1' = map (second fromLetCore) bs'1
-            bs'1'bs1 = concatMap (fst . snd) bs'1'
-            bs'1'bs2 = map (id *** snd) bs'1'
-        LamCore [] e -> e
-        LamCore xs (LamCore xs' e) -> LamCore (xs ++ xs') $ go e
-        LamCore xs e -> LamCore xs $ go e
-
-isNotFreeInCore :: Name -> LamExprCore -> Bool
-isNotFreeInCore "_" = const True
-isNotFreeInCore x = go where
-    go expr = case expr of
-        SymCore _ -> True
-        VarCore y -> x /= y
-        AppCore f xs -> x `notElem` (f:xs)
-        LetCore bs e -> all (go . snd) bs && go e
-        LamCore _ e -> go e
-
-isNoneFreeInCore :: [Name] -> LamExprCore -> Bool
-isNoneFreeInCore xs e = all (`isNotFreeInCore` e) xs
-
-fullLazinessTransLet :: LamExprCore -> LamExprCore
-fullLazinessTransLet = validTransCore . go where
-    go expr = case expr of
-        LamCore xs (LetCore bs e) -> (if null bs1 then id else LetCore bs1) $
-            LamCore xs $ LetCore bs2 $ go e
-          where
-            (bs1, bs2) = iter bs [] xs
-            iter bs1' bs2' [] = (bs1', bs2')
-            iter bs1' bs2' xs' = iter bs1'' (bs2'' ++ bs2') $ map fst bs2''
-              where
-                (bs1'', bs2'') = partition ((xs' `isNoneFreeInCore`) . snd) $ map (second go) bs1'
-
-        LetCore bs e -> LetCore (map (second go) bs) $ go e
-        _ -> expr
+namesCore = map ("v" ++) $ map show ([1..] :: [Integer])
 
 compileCore :: LamExprCore -> String
 compileCore = go where
-    go estg = case estg of
+    go exprCore = case exprCore of
         SymCore x -> "VarC \"" ++ x ++ "\""
         VarCore x -> x
-        AppCore f as -> showApp (tail as) $ "applyC " ++ f ++ " " ++ (head as)
-        LetCore ds e -> "\n let\n" ++ showDefns ds ++ " in " ++ go e
-        LamCore [] e -> go e
-        LamCore (x:xs) e -> "LamC $ \\" ++ x ++ " -> " ++ go (LamCore xs e)
-    showApp [] appStr = appStr
-    showApp (a:as) appStr = showApp as $ "applyC (" ++ appStr ++ ") " ++ a
-    showDefn (v,e) = v ++ " = " ++ go e
-    showDefns ds = unlines . map ("  " ++) . lines . intercalate "\n" $ map showDefn ds
+        AppCore f a -> "applyC (" ++ go f ++ ") (" ++ go a ++ ")"
+        LetCore (NonRec n1 e1) e -> "\n let\n" ++ goDefns [(n1, e1)] ++ " in " ++ go e
+        LetCore (Rec ds) e -> "\n letrec\n" ++ goDefns ds ++ " in " ++ go e
+        LamCore x e -> "LamC $ \\" ++ x ++ " -> " ++ go e
+    goDefn (v,e) = v ++ " = " ++ go e
+    goDefns ds = unlines . map ("  " ++) . lines . intercalate "\n" $ map goDefn ds
+
+isVarCore :: LamExprCore -> Bool
+isVarCore (VarCore _) = True
+isVarCore _ = False
+
+fromVarCore :: LamExprCore -> Name
+fromVarCore (VarCore x) = x
+fromVarCore _ = error "fromVarCore"
+
+nameExprCore :: LamExprCore -> NameM Name
+nameExprCore (VarCore x) = return x
+nameExprCore _ = newName
+
+floatComplexExpression :: LamExprCore -> NameM LamExprCore
+floatComplexExpression = go where
+    go exprCore = case exprCore of
+        SymCore x -> return $ SymCore x
+        VarCore x -> return $ VarCore x
+        AppCore f a -> goApp f [a]
+        LetCore b e -> LetCore b <$> go e
+        LamCore _ _ -> do
+            n <- newName
+            binding <- NonRec n <$> goBinding exprCore
+            return $ LetCore binding $ VarCore n
+    goApp f as = case f of
+        AppCore f' a -> goApp f' (a:as)
+        _ -> do
+            fas' <- mapM goBinding (f:as)
+            nfas <- mapM nameExprCore fas'
+            let bindings = map (uncurry NonRec) $ filter (not . isVarCore . snd) $ zip nfas fas'
+                expr = foldl1 AppCore $ map VarCore nfas
+            return $ foldr LetCore expr bindings
+    goBinding exprCore = case exprCore of
+        LamCore x e -> LamCore x <$> goBinding e
+        _ -> go exprCore
 
 data ExprStg a
     = SymStg Name
-    | VarStg a
-    | AppStg a [a] -- non-empty
-    | LetStg [(a, ClosureStg a)] (ExprStg a) -- cannot be Let
-  deriving Eq
+    | AppStg a [a]
+    | LetStg (BindingStg a) (ExprStg a)
+    deriving Eq
 
-data ClosureStg a
-    = UpdatableStg [a] (ExprStg a)
-    | NonUpdatableStg [a] (ExprStg a)
-    | FunctionStg [a] [a] (ExprStg a)
-  deriving Eq
+data BindingStg a
+    = NonRecStg a (ClosureStg a)
+    | RecStg [(a, ClosureStg a)]
+    deriving Eq
+
+data UpdateFlag = ReEntrant | Updatable | SingleEntry
+    deriving Eq
+
+data ClosureStg a = ClosureStg [a] UpdateFlag [a] (ExprStg a)
+    deriving Eq
 
 type LamExprStg = ExprStg Name
+type LamBindingStg = BindingStg Name
+type LamClosureStg = ClosureStg Name
+
+instance Show UpdateFlag where
+    show ReEntrant = "r"
+    show Updatable = "u"
+    show SingleEntry = "s"
 
 convertExprCoreToExprStg :: LamExprCore -> LamExprStg
 convertExprCoreToExprStg = go where
-    go exprLET = case exprLET of
+    go exprCore = case exprCore of
         SymCore x -> SymStg x
-        VarCore x -> VarStg x
-        AppCore f as -> AppStg f as
-        LetCore ds e -> LetStg ds' $ go e where
-            ds' = map (second toClosure) ds
-        LamCore xs _ -> error $ "convertExprCoreToExprStg : go : LamCore : " ++ show xs
-    toClosure exprLET = case exprLET of
-        LamCore xs e -> FunctionStg fvs xs e' where
-            fvs = freeVariablesInStg e' \\ xs
-            e' = go e
-        VarCore x -> error $ "convertExprCoreToExprStg : toClosure : " ++ x
-        e -> UpdatableStg (freeVariablesInStg e') e' where
-            e' = go e
+        VarCore x -> AppStg x []
+        AppCore f a -> goApp f [a]
+        LamCore _ _ -> error $ "convertExprCoreToExprStg : LamCore"
+        LetCore b e -> LetStg (goBinding b) (go e)
+    goApp f as = case f of
+        AppCore f' a -> goApp f' (a:as)
+        _ -> AppStg (fromVarCore f) $ map fromVarCore as
+    goBinding (NonRec n exprCore) = NonRecStg n $ goClosure exprCore
+    goBinding (Rec bs) = RecStg $ map (second goClosure) bs
+    goClosure exprCore = case exprCore of
+        LamCore x e -> goLamClosure [x] e
+        _ -> ClosureStg fvs Updatable [] exprStg where
+            exprStg = go exprCore
+            fvs = freeVariablesInExprStg exprStg
+    goLamClosure xs exprCore = case exprCore of
+        LamCore x e -> goLamClosure (x:xs) e
+        _ -> ClosureStg fvs ReEntrant (reverse xs) exprStg where
+            exprStg = go exprCore
+            fvs = freeVariablesInExprStg exprStg \\ xs
 
-freeVariablesInStg :: LamExprStg -> [Name]
-freeVariablesInStg = go where
-    go exprStg = case exprStg of
-        SymStg _ -> []
-        VarStg x -> [x]
-        AppStg f as -> nub (f:as)
-        LetStg ds e -> foldr union (freeVariablesInStg e) $ map (freeVariablesInClosureStg . snd) ds
+freeVariablesInExprStg :: LamExprStg -> [Name]
+freeVariablesInExprStg exprStg = case exprStg of
+    SymStg _ -> []
+    AppStg f as -> nub (f:as)
+    LetStg b e -> union bfvs $ freeVariablesInExprStg e \\ bns where
+        bfvs = freeVariablesInBindingStg b
+        bns = namesInBindingStg b
 
-freeVariablesInClosureStg :: ClosureStg a -> [a]
-freeVariablesInClosureStg = go where
-    go closure = case closure of
-        UpdatableStg fvs _ -> fvs
-        NonUpdatableStg fvs _ -> fvs
-        FunctionStg fvs _ _ -> fvs
+freeVariablesInClosure :: ClosureStg a -> [a]
+freeVariablesInClosure (ClosureStg fvs _ _ _) = fvs
+
+freeVariablesInBindingStg :: Eq a => BindingStg a -> [a]
+freeVariablesInBindingStg (NonRecStg _ c) = freeVariablesInClosure c
+freeVariablesInBindingStg (RecStg bs) = foldr1 union $ map (freeVariablesInClosure . snd) bs
+
+namesInBindingStg :: BindingStg a -> [a]
+namesInBindingStg (NonRecStg x _) = [x]
+namesInBindingStg (RecStg bs) = map fst bs
 
 compileStg :: LamExprStg -> String
 compileStg = go where
-    go estg = case estg of
+    go exprStg = case exprStg of
         SymStg x -> "VarC \"" ++ x ++ "\""
-        VarStg x -> x
-        AppStg f as -> goApp (tail as) $ "applyC " ++ f ++ " " ++ (head as)
-        LetStg ds e -> "\n let\n" ++ goDefns ds ++ " in " ++ go e
-    goClosure closure = case closure of
-        UpdatableStg fvs e -> "{- " ++ unwords fvs ++ " -} " ++ go e
-        NonUpdatableStg fvs e -> "{- " ++ unwords fvs ++ " -} " ++ go e
-        FunctionStg fvs xs e -> "{- " ++ unwords fvs ++ " -} " ++ (concat $ map (\x -> "LamC $ \\" ++ x ++ " -> ") xs ++ [go e])
-    goApp [] appStr = appStr
-    goApp (a:as) appStr = goApp as $ "applyC (" ++ appStr ++ ") " ++ a
+        AppStg f [] -> f
+        AppStg f as -> goApp (tail as) $ "applyC " ++ f ++ " " ++ head as
+        LetStg (NonRecStg n1 e1) e -> "\n let\n" ++ goDefns [(n1, e1)] ++ " in " ++ go e
+        LetStg (RecStg ds) e -> "\n letrec\n" ++ goDefns ds ++ " in " ++ go e
+    goApp [] str = str
+    goApp (a:as) str = goApp as $ "applyC (" ++ str ++ ") " ++ a
     goDefn (v,e) = v ++ " = " ++ goClosure e
     goDefns ds = unlines . map ("  " ++) . lines . intercalate "\n" $ map goDefn ds
+    goClosure (ClosureStg fvs updFlag [] exprStg) =
+        "{- " ++ unwords fvs ++ " \\" ++ show updFlag ++ " -} " ++ go exprStg
+    goClosure (ClosureStg fvs updFlag xs exprStg) =
+        "{- " ++ unwords fvs ++ " \\" ++ show updFlag ++ " -} " ++ goLam xs (go exprStg)
+    goLam [] = id
+    goLam (x:xs) = (("LamC $ \\" ++ x ++ " -> ") ++) . goLam xs
+
+showStg :: LamExprStg -> String
+showStg = go where
+    go exprStg = case exprStg of
+        SymStg x -> "VarC \"" ++ x ++ "\""
+        AppStg f [] -> f ++ " {}"
+        AppStg f as -> f ++ " {" ++ unwords as ++ "}"
+        LetStg b e -> "\n let\n" ++ showBindingStg b ++ " in " ++ go e
+
+showBindingStg :: LamBindingStg -> String
+showBindingStg binding = case binding of
+    NonRecStg n1 e1 -> goDefns [(n1, e1)]
+    RecStg ds -> goDefns ds
+  where
+    goDefn (v,e) = v ++ " = " ++ showClosureStg e
+    goDefns ds = unlines . map ("  " ++) . lines . intercalate "\n" $ map goDefn ds
+
+showClosureStg :: LamClosureStg -> String
+showClosureStg = goClosure where
+    goClosure (ClosureStg fvs updFlag [] exprStg) =
+        "{" ++ unwords fvs ++ "} \\" ++ show updFlag ++ " {} -> " ++ showStg exprStg
+    goClosure (ClosureStg fvs updFlag xs exprStg) =
+        "{" ++ unwords fvs ++ "} \\" ++ show updFlag ++ " {" ++ unwords xs ++ "} -> " ++ showStg exprStg
+
+compileStgToC :: LamExprStg -> String
+compileStgToC exprStg = (header ++) . unlines $
+    map showFunctionDeclCmm allCode ++ [""] ++
+    map showFunctionCmm allCode
+  where
+    header = "#include \"lam_stg.h\"\n\n"
+    allCode = makeCode ++ enterCode ++ [mainCode]
+    mainCode = FunctionCmm "int" "main" []
+        [ StatCmm $ FunctionCallCmm "initialize" []
+        , AssignCmm (VarCmm "cur_closure") $ FunctionCallCmm "enter_closure_mainLam" []
+        , StatCmm $ LitCmm "while (1) { cur_closure = cur_closure->code(); if (need_gc()) gc(); }"
+        , ReturnCmm $ LitCmm "0" ]
+    makeCode = map makeCodeGen . sort . nub $ [1..4] ++ map nfvsGen allBindings where
+        makeCodeGen nfvs = FunctionCmm "closure *" ("make_closure_" ++ show nfvs) params defns where
+            fvs = map (\n -> "c" ++ show n) [0..nfvs-1]
+            params = ("func_ptr", "func") : zip (repeat "closure *") fvs
+            defns =
+                [ DeclInitCmm "closure *" "ret" $ FunctionCallCmm "alloc_heap" [LitCmm $ show $ length fvs]
+                , AssignCmm (VarCmm "ret->code") $ VarCmm "func"
+                , AssignCmm (VarCmm "ret->fv_cnt") $ LitCmm (show $ length fvs)
+                , DeclInitCmm "closure **" "fv_ptr" $ CoercionCmm "closure **" $ VarCmm "(ret + 1)" ]
+                ++ assigns ++
+                [ ReturnCmm $ VarCmm "ret" ]
+            assigns = zipWith AssignCmm (map (ArrayIndexCmm (VarCmm "fv_ptr")) [0..]) (map VarCmm fvs)
+        nfvsGen binding = case binding of
+            RecStg _ -> undefined
+            NonRecStg _ (ClosureStg fvs _ _ _) -> length fvs
+    enterCode = map enterCodeGen allBindings where
+        enterCodeGen binding = case binding of
+            RecStg _ -> undefined
+            NonRecStg name (ClosureStg fvs updFlag xs expr) ->
+                FunctionCmm "closure *" ("enter_closure_" ++ name) [] defns
+              where
+                defns = paramsInit ++ freeVarsInit ++ lets ++ final
+                paramsInit = if null params then [] else needArg : params ++ [popArg] where
+                    needArg = StatCmm $ FunctionCallCmm "need_args" [LitCmm $ show $ length xs]
+                    params = zipWith getParamGen xs ([0..] :: [Int])
+                    getParamGen x k = DeclInitCmm "closure *" x $ FunctionCallCmm "get_param" [LitCmm $ show k]
+                    popArg = StatCmm $ FunctionCallCmm "pop" [LitCmm $ show $ length xs]
+                freeVarsInit = if null freeVars then [] else fvPtr : freeVars where
+                    fvPtr = DeclInitCmm "closure **" "fv_ptr" $
+                        CoercionCmm "closure **" $ VarCmm "(cur_closure + 1)"
+                    freeVars = zipWith freeVarGen fvs ([0..] :: [Int])
+                    freeVarGen fv k = DeclInitCmm "closure *" fv $ ArrayIndexCmm (VarCmm "fv_ptr") k
+                lets = map letGen $ bindingsGen expr where
+                    letGen b = case b of
+                        RecStg _ -> undefined
+                        NonRecStg n (ClosureStg fvs' _ _ _) -> DeclInitCmm "closure *" n $
+                            FunctionCallCmm ("make_closure_" ++ show (length fvs')) $
+                            VarCmm ("enter_closure_" ++ n) : map VarCmm fvs'
+                    bindingsGen e = case e of
+                        LetStg b e' -> b : bindingsGen e'
+                        _ -> []
+                final = exprGen expr where
+                    exprGen e = case e of
+                        LetStg _ e' -> exprGen e'
+                        SymStg x ->
+                            [ StatCmm $ FunctionCallCmm "create_ubsym"
+                                [VarCmm "symbol", LitCmm $ "\"" ++ x ++ "\""]
+                            , ReturnCmm $ VarCmm "symbol" ]
+                        AppStg f as -> if updFlag == Updatable
+                            then [ StatCmm $ FunctionCallCmm "push_upd_frame" []
+                                 , AssignCmm (VarCmm "cur_closure->code") $ VarCmm "black_hole" ]
+                                ++ pushEnter
+                            else pushEnter
+                          where
+                            pushEnter = map pushArgGen (reverse as) ++ [ ReturnCmm $ VarCmm f ]
+                            pushArgGen a = StatCmm $ FunctionCallCmm "push" [VarCmm a]
+    mainBinding = NonRecStg "mainLam" (ClosureStg [] SingleEntry [] exprStg)
+    allBindings = bindingsB mainBinding where
+        bindingsB binding = case binding of
+            RecStg _ -> undefined
+            NonRecStg _ (ClosureStg _ _ _ e) -> binding : bindingsE e
+        bindingsE expr = case expr of
+            LetStg binding e -> bindingsE e ++ bindingsB binding
+            _ -> []
+
+data FunctionCmm = FunctionCmm TypeCmm Name [(TypeCmm, Name)] [StatementCmm]
+
+showFunctionDeclCmm :: FunctionCmm -> String
+showFunctionDeclCmm (FunctionCmm typeCmm funcName params _) =
+    typeCmm ++ " " ++ funcName ++ "(" ++ showParams params ++ ");"
+  where
+    showParam (ty, name) = ty ++ " " ++ name
+    showParams = intercalate ", " . map showParam
+
+showFunctionCmm :: FunctionCmm -> String
+showFunctionCmm (FunctionCmm typeCmm funcName params stats) =
+    typeCmm ++ " " ++ funcName ++ "(" ++ showParams params ++ ") {\n" ++
+    indentCmm (concatMap showStatementCmm stats) ++ "}\n"
+  where
+    indentCmm = unlines . map ("    " ++) . lines
+    showParam (ty, name) = ty ++ " " ++ name
+    showParams = intercalate ", " . map showParam
+
+data StatementCmm
+    = DeclCmm TypeCmm Name
+    | DeclInitCmm TypeCmm Name ExprCmm
+    | AssignCmm ExprCmm ExprCmm
+    | StatCmm ExprCmm
+    | ReturnCmm ExprCmm
+
+showStatementCmm :: StatementCmm -> String
+showStatementCmm statCmm = go statCmm ++ ";\n" where
+    go stat = case stat of
+        DeclCmm ty name -> ty ++ " " ++ name
+        DeclInitCmm ty name expr -> ty ++ " " ++ name ++ " = " ++ showExprCmm expr
+        AssignCmm le re -> showExprCmm le ++ " = " ++ showExprCmm re
+        StatCmm e -> showExprCmm e
+        ReturnCmm e -> "return " ++ showExprCmm e
+
+data ExprCmm
+    = LitCmm LiteralCmm
+    | VarCmm Name
+    | ArrayIndexCmm ExprCmm Int
+    | CoercionCmm TypeCmm ExprCmm
+    | IndirectionCmm ExprCmm
+    | FunctionCallCmm Name [ExprCmm]
+
+showExprCmm :: ExprCmm -> String
+showExprCmm = go where
+    go exprCmm = case exprCmm of
+        LitCmm lit -> lit
+        VarCmm var -> var
+        ArrayIndexCmm e i -> go e ++ "[" ++ show i ++ "]"
+        CoercionCmm ty e -> "(" ++ ty ++ ")" ++ showExprCmm e
+        IndirectionCmm e -> "*(" ++ go e ++ ")"
+        FunctionCallCmm fn es -> fn ++ "(" ++ intercalate ", " (map go es) ++ ")"
+
+type TypeCmm = String
+type LiteralCmm = String
 
 preludeStr :: String
 preludeStr = [stringQQ|

@@ -246,7 +246,7 @@ compileStgToC exprStg = (header ++) . unlines $
         , AssignCmm (VarCmm "cur_closure") $ FunctionCallCmm "enter_closure_mainLam" []
         , StatCmm $ LitCmm "while (1) { cur_closure = cur_closure->code(); if (need_gc()) gc(); }"
         , ReturnCmm $ LitCmm "0" ]
-    makeCode = map makeCodeGen . sort . nub $ [1..4] ++ map nfvsGen allBindings where
+    makeCode = map makeCodeGen . sort . nub $ map nfvsGen allBindings where
         makeCodeGen nfvs = FunctionCmm "closure *" ("make_closure_" ++ show nfvs) params defns where
             fvs = map (\n -> "c" ++ show n) [0..nfvs-1]
             params = ("func_ptr", "func") : zip (repeat "closure *") fvs

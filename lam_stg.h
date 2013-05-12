@@ -160,8 +160,8 @@ closure *black_hole(void)
 closure *move(closure *src)
 {
     while(src->code == run_indirection) {
-        closure **fv_ptr = (closure **)(src + 1);
-        src = fv_ptr[0];
+        closure **fv_ptr = (closure **)src;
+        src = fv_ptr[1];
     }
 
     if(src->code == NULL) {
@@ -467,18 +467,18 @@ closure *make_upd(closure *ret)
 
 closure *run_indirection(void)
 {
-    closure **fv_ptr = (closure **)(cur_closure + 1);
-    return fv_ptr[0];
+    closure **fv_ptr = (closure **)cur_closure;
+    return fv_ptr[1];
 }
 
 // fill a closure with indirection information
 void fill_ind_info(closure *src, closure *dst)
 {
-    assert(src->fv_cnt >= 1);
+//    assert(src->fv_cnt >= 1);
     src->code = run_indirection;
 
-    closure **fv_ptr = (closure **)(src + 1);
-    fv_ptr[0] = dst;
+    closure **fv_ptr = (closure **)src;
+    fv_ptr[1] = dst;
 }
 
 void update_closure(void)

@@ -17,7 +17,10 @@ main = do
     args <- getArgs
     exprStr <- getContents
     let expr = (if "-O" `elem` args then simplifyExprInline else id) $ readExpr exprStr
-        exprCoreNM = convertExprToExprCore expr >>= floatComplexExpression
+        exprCoreNM = convertExprToExprCore expr
+            >>= floatComplexExpression
+            >>= floatComplexExpression . fullLazinessTransform . fullLazinessTransform
+            >>= floatComplexExpression . fullLazinessTransform
         exprCore = evalState exprCoreNM namesCore
         exprStg = convertExprCoreToExprStg exprCore
     if "-C" `elem` args
@@ -59,6 +62,7 @@ data BindingCore a
     deriving (Eq, Show)
 
 type LamExprCore = ExprCore Name
+type LamBindingCore = BindingCore Name
 
 convertExprToExprCore :: LamExpr -> NameM LamExprCore
 convertExprToExprCore = go [] . buildExprBruijn where
@@ -106,7 +110,7 @@ floatComplexExpression = go where
         SymCore x -> return $ SymCore x
         VarCore x -> return $ VarCore x
         AppCore f a -> goApp f [a]
-        LetCore b e -> LetCore b <$> go e
+        LetCore b e -> LetCore <$> goIntoBinding b <*> go e
         LamCore _ _ -> do
             n <- newName
             binding <- NonRec n <$> goBinding exprCore
@@ -122,6 +126,67 @@ floatComplexExpression = go where
     goBinding exprCore = case exprCore of
         LamCore x e -> LamCore x <$> goBinding e
         _ -> go exprCore
+    goIntoBinding (NonRec n e) = NonRec n <$> goBinding e
+    goIntoBinding (Rec bs) = Rec . zip ns <$> mapM goBinding es where
+        (ns, es) = unzip bs
+
+isNotIn :: Name -> LamExprCore -> Bool
+isNotIn x = go where
+    go exprCore = case exprCore of
+        SymCore _ -> True
+        VarCore y -> x /= y
+        AppCore f a -> go f && go a
+        LetCore (NonRec n be) e -> x == n || go be && go e
+        LetCore (Rec _) _ -> undefined
+        LamCore y body -> x == y || go body
+
+isNotInBinding :: Name -> LamBindingCore -> Bool
+isNotInBinding x (NonRec n be) = x == n || x `isNotIn` be
+isNotInBinding _ (Rec _) = undefined
+
+areNotIn :: [Name] -> LamExprCore -> Bool
+areNotIn xs e = all (`isNotIn` e) xs
+
+areNotInBinding :: [Name] -> LamBindingCore -> Bool
+areNotInBinding xs b = all (`isNotInBinding` b) xs
+
+getBindingName :: LamBindingCore -> Name
+getBindingName (NonRec n _) = n
+getBindingName (Rec _) = undefined
+
+fullLazinessTransform :: LamExprCore -> LamExprCore
+fullLazinessTransform = go where
+    go exprCore = case exprCore of
+        SymCore x -> SymCore x
+        VarCore x -> VarCore x
+        AppCore fun arg -> addBindings (funBs ++ argBs) $ AppCore funE argE where
+            (funBs, funE) = getBsAndE $ go fun
+            (argBs, argE) = getBsAndE $ go arg
+        LetCore b e -> addBindings (bs ++ ebs) ee where
+            bs = goBinding b
+            (ebs, ee) = getBsAndE $ go e
+        LamCore x body -> iter [x] bs [] where
+            iter [] bsU xsAll = addBindings bsU $ LamCore x $ addBindings bsD e where
+                bsD = filter (not . (xsAll `areNotInBinding`)) bs
+            iter xs bsU xsAll = iter xs' bsU' (xs ++ xsAll) where
+                xs' = map getBindingName bsD'
+                (bsU', bsD') = partition (xs `areNotInBinding`) bsU
+            (bs, e) = getBsAndE $ go body
+    goBinding (NonRec n e) = bs ++ [b] where
+        e' = go e
+        bs = getTopLevalBindings e'
+        b = NonRec n $ getTopLevalExpr e'
+    goBinding (Rec _) = undefined
+    getBsAndE exprCore = (getTopLevalBindings exprCore, getTopLevalExpr exprCore)
+    getTopLevalBindings exprCore = case exprCore of
+        LetCore b e -> b : getTopLevalBindings e
+        _ -> []
+    getTopLevalExpr exprCore = case exprCore of
+        LetCore _ e -> getTopLevalExpr e
+        _ -> exprCore
+    addBindings bs = case bs of
+        [] -> id
+        b':bs' -> LetCore b' . addBindings bs'
 
 data ExprStg a
     = SymStg Name
@@ -149,6 +214,8 @@ instance Show UpdateFlag where
     show Updatable = "u"
     show SingleEntry = "s"
 
+-- Assume all complex expressions have already been moved to right hand side of let,
+-- which basically means that this function should be called right after floatComplexExpression
 convertExprCoreToExprStg :: LamExprCore -> LamExprStg
 convertExprCoreToExprStg = go where
     go exprCore = case exprCore of

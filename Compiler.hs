@@ -16,12 +16,15 @@ main :: IO ()
 main = do
     args <- getArgs
     exprStr <- getContents
-    let expr = (if "-O" `elem` args then simplifyExprInline else id) $ readExpr exprStr
-        exprCoreNM = convertExprToExprCore expr
-            >>= floatComplexExpression
-            >>= floatComplexExpression . fullLazinessTransform . fullLazinessTransform
-            >>= floatComplexExpression . fullLazinessTransform
-        exprCore = evalState exprCoreNM namesCore
+    let expr = readExpr exprStr
+        expr' = if "-O" `elem` args || "--inline" `elem` args
+            then simplifyExprInline expr
+            else expr
+        exprCoreNM = convertExprToExprCore expr' >>= floatComplexExpression
+        exprCoreNM' = if "-O" `elem` args || "--full-laziness" `elem` args
+            then exprCoreNM >>= floatComplexExpression . fullLazinessTransform
+            else exprCoreNM
+        exprCore = evalState exprCoreNM' namesCore
         exprStg = convertExprCoreToExprStg exprCore
     if "-C" `elem` args
         then do
@@ -88,7 +91,7 @@ compileCore = go where
         AppCore f a -> "applyC (" ++ go f ++ ") (" ++ go a ++ ")"
         LetCore (NonRec n1 e1) e -> "\n let\n" ++ goDefns [(n1, e1)] ++ " in " ++ go e
         LetCore (Rec ds) e -> "\n letrec\n" ++ goDefns ds ++ " in " ++ go e
-        LamCore x e -> "LamC $ \\" ++ x ++ " -> " ++ go e
+        LamCore x e -> "LamC (\\" ++ x ++ " -> " ++ go e ++ ")"
     goDefn (v,e) = v ++ " = " ++ go e
     goDefns ds = unlines . map ("  " ++) . lines . intercalate "\n" $ map goDefn ds
 
@@ -275,8 +278,8 @@ compileStg = go where
         "{- " ++ unwords fvs ++ " \\" ++ show updFlag ++ " -} " ++ go exprStg
     goClosure (ClosureStg fvs updFlag xs exprStg) =
         "{- " ++ unwords fvs ++ " \\" ++ show updFlag ++ " -} " ++ goLam xs (go exprStg)
-    goLam [] = id
-    goLam (x:xs) = (("LamC $ \\" ++ x ++ " -> ") ++) . goLam xs
+    goLam [] e = e
+    goLam (x:xs) e = "LamC (\\" ++ x ++ " -> " ++  goLam xs e ++ ")"
 
 showStg :: LamExprStg -> String
 showStg = go where
@@ -452,15 +455,14 @@ data ExprBruijn a
     | LamBruijn (ExprBruijn a)
     deriving Show
 
-data ExprC a
-    = VarC a
-    | ApC (ExprC a) (ExprC a)
-    | LamC (ExprC a -> ExprC a)
+data LamExprC
+    = VarC Name
+    | ApC LamExprC LamExprC
+    | LamC (LamExprC -> LamExprC)
 
 type Name = String
 type LamExpr = Expr Name
 type LamExprBruijn = ExprBruijn Name
-type LamExprC = ExprC Name
 
 main :: IO ()
 main = putStrLn . showExpr . unBuildExprBruijn . buildExprBruijn . unBuildExprC $ expression
@@ -526,7 +528,7 @@ names = (map (\c -> [c]) "abcdefghijklmnopqrstuvwxyz" ++) . map ("var"++) $ map 
 variableNames :: [Name]
 variableNames = map ("$Var" ++) $ map show ([1..] :: [Integer])
 
-applyC :: ExprC a -> ExprC a -> ExprC a
+applyC :: LamExprC -> LamExprC -> LamExprC
 applyC fun arg = case fun of
     LamC f -> f arg
     _ -> ApC fun arg

@@ -9,14 +9,19 @@ main :: IO ()
 main = do
     args <- getArgs
     exprStr <- getContents
-    let exprRead = readExpr exprStr
-        expr = simplifyExprInline exprRead
+    let expr = readExpr exprStr
+        expr' = if "-O" `elem` args || "--inline" `elem` args
+            then simplifyExprInline expr
+            else expr
     if "-v" `elem` args
         then do
             putStrLn "Original Expression"
-            putStrLn $ showExpr exprRead
-            putStrLn "Inlined Expression"
             putStrLn $ showExpr expr
+            if "-O" `elem` args || "--inline" `elem` args
+                then do
+                    putStrLn "Inlined Expression"
+                    putStrLn $ showExpr expr'
+                else return ()
             putStrLn "Evaluation Start"
         else return ()
 
